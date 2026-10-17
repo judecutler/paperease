@@ -186,6 +186,7 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
       from: m.sender,
       text: opt(m.body),
       attachment: opt(m.attachment),
+      photoCheck: opt(m.photo_check),
       time: iso(m.sent_at),
     })),
     audit: audit.map((e): AuditEvent => ({
@@ -271,6 +272,7 @@ async function saveSupabase(sb: SupabaseClient, db: Db) {
       sender: m.from,
       body: m.text ?? null,
       attachment: m.attachment ?? null,
+      photo_check: m.photoCheck ?? null,
       sent_at: m.time,
     }))),
     upsert('audit_events', db.audit.map((e) => ({

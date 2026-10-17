@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:photo": "tsx --import ./tests/offline-env.mjs --test tests/photo-check.test.mjs tests/photo-flow.test.cjs",
+    "test:all": "tsx --import ./tests/offline-env.mjs --test tests/*.test.*",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

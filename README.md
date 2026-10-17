@@ -14,6 +14,7 @@ Built as a hackathon MVP. The full flow runs end to end with no API keys and no 
 - **SMS outreach:** the agent requests documents in the caregiver's language (English or Spanish) and sends reminders.
 - **Caregiver upload link:** every request text carries a secure link to a phone-friendly page. Caregivers see what is needed, take a photo and answer the agent's question there, with no app or login. What they send fills in the agency's record the same way an SMS reply does.
 - **AI extraction:** reads the photo the caregiver sends and fills in each field with a confidence score and a pointer to where on the document it was found.
+- **Photo checks in messages:** shows each attachment's preliminary result and next step, with a detailed checklist available in the conversation.
 - **Follow-ups:** when a required field is missing, the agent asks the caregiver and reads the answer from their reply.
 - **Daily sweep:** every morning the agent re-checks expiry dates and reminds caregivers who have not replied. Requests that stay silent go to a person. It can also request new gaps on its own if you turn that on.
 - **Exception handling:** escalates to a person for blurry photos, name mismatches, too few training hours, wrong documents and opt-outs.
@@ -39,7 +40,7 @@ On first run the app creates `data/db.json` with 6 sample caregivers. To start o
 
 1. On the dashboard, Maria Lopez's **Entry training** is **Missing**. Click her row.
 2. Click **Ask agent to request**. The agent texts Maria and the status becomes **Requested**.
-3. On the simulated phone at the right, send the **Training certificate, hours not shown (Maria)** photo. The agent extracts 4 fields, sees the hours are missing and asks a follow-up. The status becomes **Following up**.
+3. On the simulated phone at the right, choose **Entry training** under **Check document for**, then send the **Training certificate, hours not shown (Maria)** sample photo. Its message shows **More information needed** and a suggested next step. Expand **View checks** to inspect the detailed result. The agent sees the hours are missing and asks a follow-up. The status becomes **Following up**.
 4. Reply with the **It was 5 hours** chip. The agent reads the hours from the reply and prepares the record. The status becomes **Pending review**.
    Instead of steps 3 and 4 you can tap the link in the agent's text. It opens the caregiver's page, where you can send the sample document and answer the question the way a caregiver would.
 5. **Verify** or **Correct** each field. Once every field is confirmed, **Approve record** turns on. Approve it, then check the audit trail.
@@ -102,6 +103,26 @@ Request, reminder and follow-up texts end with a link to `/u/<token>`. The token
 
 In demo mode (no `ANTHROPIC_API_KEY`) uploaded photos cannot be read, so the page also offers the sample documents, labeled as a demo.
 
+### Photo checks in messages
+
+Choose an open document request and use **Send sample photo** for a sample, or **Upload your own photo** for an image (up to 5 MB). Upload and analysis progress appear in the composer, followed by the result and a suggested next step beside that attachment. Expand **View checks** to see the detailed checklist. Each result is saved with its message; later replies do not rewrite the earlier photo's result.
+
+The checks cover readability, requested document type, caregiver name, reading confidence, required information and training hours where applicable. The outcome is one of **Ready for staff review**, **More information needed**, **Staff review needed** or **Not checked**. A pass means that a preliminary check passed; it does not establish document authenticity or final approval.
+
+Real image analysis uses the existing Anthropic configuration. Sample fallbacks are explicitly labeled **Demo result**. An uploaded image with no configured AI, an analysis failure, or an unsupported PDF is marked **Not checked** and left for staff; it is never treated as a successful check. PDFs remain available as original attachments for manual review.
+
+The `caregiver-reply` action accepts `requirementId` to route the reply to an open request. When several requests are open, this is required: the agent does not guess which record a photo belongs to. Closed or invalid targets are left unassessed. SMS opt-out and consent also apply to photo collection. Photo checks are preliminary; a person still verifies the fields and approves the record.
+
+Photo-check cases to try without AI keys:
+
+| Sample or action | Photo-check result |
+| --- | --- |
+| Maria's **Training transcript with hours** for Entry training | **Ready for staff review**; every extracted field still needs a person's verification |
+| Maria's **Training certificate, hours not shown** | **More information needed**; provide the missing training hours |
+| A document with another caregiver's name, or a blurry sample | **Staff review needed**; mismatches or unreadable content are flagged |
+| A TB result for an Entry training request | **More information needed**; send the requested document |
+| Upload your own image without an AI key, or upload a PDF | **Not checked**; staff must read the original attachment |
+
 ### Daily sweep
 
 Once a day the agent:
@@ -137,12 +158,23 @@ When a Home Care Aide registration is submitted, the agent looks the aide up on 
 - Supabase: run `supabase/migrations/20261017000005_registry_check.sql` (adds `submissions.registry_check`).
 - `npm test` runs the registry and agent-flow tests.
 
+## Validation
+
+```bash
+npm run test:all
+npm run typecheck
+npm run build
+```
+
+`npm run test:photo` runs the 31 photo-check and workflow cases; `npm run test:all` also includes the regulatory tests. Photo coverage includes document routing, missing fields, mismatches, unavailable analysis, manual approval and a mocked Supabase message roundtrip. Both commands use a shared preload that disables provider and Supabase credentials and sets test mode before every worker starts. The suites use deterministic fixtures and separate temporary data directories; they do not make model calls or change the demo's saved records. The existing `npm test` command remains available for the regulatory suite. The `tsx` dependency runs the tests and database seeding script.
+
 ## Project structure
 
 | Path | What it does |
 | --- | --- |
 | `lib/agent.ts` | Agent workflow and every action: gap detection, requests, replies, verification, approval, rejection, rule changes |
 | `lib/llm.ts` | Claude and RunAnywhere calls with fallbacks |
+| `lib/photo-check.ts` | Per-attachment checks and preliminary outcomes |
 | `lib/db.ts` | Storage for data (`load()`/`save()`) and uploads (`writeUpload()`/`readUpload()`), in Supabase or local files |
 | `lib/registry.ts`, `lib/registry-providers.ts` | California HCA registry check: status rules, demo and manual providers |
 | `lib/seed.ts` | Requirement checklist and sample data |
@@ -150,10 +182,12 @@ When a Home Care Aide registration is submitted, the agent looks the aide up on 
 | `lib/links.ts`, `lib/caregiverLink.ts` | Signed upload links and what the caregiver's page shows |
 | `app/` | Next.js pages (dashboard, caregiver detail, audit trail, rules) and API routes, including `api/cron` for the daily sweep |
 | `components/` | UI components and the client data hook |
+| `components/PhotoCheckCard.tsx` | Compact message-thread result with expandable check details |
 | `supabase/migrations/` | Postgres tables and the Storage bucket |
 | `tests/` | `npm test`: registry rules and agent-flow tests |
 | `scripts/seed-supabase.ts` | Copies the local store into Supabase and checks the round trip |
 | `scripts/make-samples.mjs` | Generates the sample document images with Playwright |
+| `tests/` | Offline photo-check and persisted workflow tests |
 
 ## Design principles
 

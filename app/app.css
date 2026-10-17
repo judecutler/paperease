@@ -81,6 +81,7 @@ table.roster { width: 100%; border-collapse: collapse; min-width: 900px; }
 .phone { position: sticky; top: 84px; display: grid; gap: var(--space-2); justify-items: center; }
 .phone .cl-sms { max-width: 360px; display: flex; flex-direction: column; max-height: calc(100vh - 140px); }
 .phone .cl-sms-body { overflow-y: auto; flex: 1; min-height: 240px; }
+.cl-sms-row.cl-sms-photo-result { width: 100%; max-width: 100%; min-width: 0; }
 .cl-sms-bubble { white-space: pre-line; overflow-wrap: anywhere; }
 .cl-sms-bubble a { color: inherit; }
 .sms-photo { display: block; width: 180px; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid var(--line); background: var(--surface-sunken); }
@@ -88,6 +89,12 @@ table.roster { width: 100%; border-collapse: collapse; min-width: 900px; }
 .composer { border-top: 1px solid var(--line); padding: var(--space-3); display: grid; gap: var(--space-2); background: var(--surface); }
 .composer-row { display: flex; gap: var(--space-2); }
 .composer .hint { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.photo-target { display: grid; gap: var(--space-1); font-size: 12px; line-height: 16px; font-weight: 700; color: var(--ink-muted); min-width: 0; }
+.photo-target .input { width: 100%; color: var(--ink); font-weight: 400; }
+.photo-progress, .photo-error { padding: var(--space-2); border-radius: var(--radius-sm); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.photo-progress { background: var(--agent-soft); color: var(--agent); }
+.photo-progress span { font-weight: 700; }
+.photo-error { background: var(--danger-soft); color: var(--danger); }
 .chips { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 .chip { font: inherit; font-size: 12px; line-height: 16px; padding: 4px var(--space-2); border-radius: var(--radius-full); border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--ink); cursor: pointer; }
 .chip:hover { background: var(--surface-sunken); }
