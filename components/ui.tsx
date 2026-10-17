@@ -1,7 +1,8 @@
 // TSX port of the CareLoop design system reference components (design-system/reference-components.js).
 // Class names match app/components.css.
 import type React from 'react';
-import type { DocStatus } from '@/lib/types';
+import type { DocStatus, PhotoCheck } from '@/lib/types';
+import { PhotoCheckCard } from '@/components/PhotoCheckCard';
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 
@@ -115,7 +116,7 @@ export function ApprovalBar(props: { unverified?: number; note?: string; busy?: 
   );
 }
 
-export interface SmsBubble { id: string; from: 'agent' | 'admin' | 'caregiver'; text?: string; time?: string; attachment?: { name: string; url: string; mime: string } }
+export interface SmsBubble { id: string; from: 'agent' | 'admin' | 'caregiver'; text?: string; time?: string; attachment?: { name: string; url: string; mime: string }; photoCheck?: PhotoCheck }
 
 export function SmsThread({ contact, number, messages, footer, bodyRef }: { contact?: string; number?: string; messages: SmsBubble[]; footer?: React.ReactNode; bodyRef?: React.Ref<HTMLDivElement> }) {
   return (
@@ -131,7 +132,7 @@ export function SmsThread({ contact, number, messages, footer, bodyRef }: { cont
         {messages.map((m) => {
           const mine = m.from !== 'caregiver';
           return (
-            <div key={m.id} className={cx('cl-sms-row', mine ? 'cl-sms-out' : 'cl-sms-in')}>
+            <div key={m.id} className={cx('cl-sms-row', mine ? 'cl-sms-out' : 'cl-sms-in', !!m.photoCheck && 'cl-sms-photo-result')}>
               {m.attachment &&
                 (m.attachment.mime.startsWith('image/') ? (
                   <a href={m.attachment.url} target="_blank" rel="noreferrer" className="sms-photo">
@@ -145,6 +146,7 @@ export function SmsThread({ contact, number, messages, footer, bodyRef }: { cont
                   </a>
                 ))}
               {m.text && <div className={cx('cl-sms-bubble', m.from === 'admin' && 'cl-sms-admin')}>{m.text}</div>}
+              {m.photoCheck && <PhotoCheckCard check={m.photoCheck} />}
               <div className="cl-sms-meta cl-data">
                 {m.from === 'agent' ? 'CareLoop agent' : m.from === 'admin' ? 'Agency staff' : 'Caregiver'}
                 {m.time ? ` · ${m.time}` : ''}
