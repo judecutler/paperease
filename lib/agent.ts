@@ -384,9 +384,10 @@ async function sweep(c: Ctx, trigger: 'schedule' | 'admin') {
   });
 }
 
-export async function run(action: Action): Promise<Db> {
+export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
+  if (suppliedDb && ['reset', 'add-caregiver'].includes(action.type)) throw new Error('Use regulatory onboarding to manage this workspace.');
   if (action.type === 'reset') return await reset();
-  const db = await load();
+  const db = suppliedDb || await load();
   const c = new Ctx(db);
   switch (action.type) {
     case 'run-gap-check': {
@@ -550,6 +551,6 @@ export async function run(action: Action): Promise<Db> {
       break;
     }
   }
-  await save(db);
+  if (!suppliedDb) await save(db);
   return db;
 }

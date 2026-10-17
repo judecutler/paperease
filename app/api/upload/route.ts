@@ -7,7 +7,7 @@ const ALLOWED: Record<string, string> = { 'image/png': '.png', 'image/jpeg': '.j
 const MAX_BYTES = 5 * 1024 * 1024;
 
 export async function POST(request: Request) {
-  const form = await request.formData();
+  const form = await request.formData() as unknown as FormData;
   const file = form.get('file');
   if (!(file instanceof File)) return NextResponse.json({ error: 'No file' }, { status: 400 });
   const ext = ALLOWED[file.type];

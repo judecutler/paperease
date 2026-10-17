@@ -110,7 +110,7 @@ When a Home Care Aide registration is submitted, the agent looks the aide up on 
 - Choose a provider with `REGISTRY_PROVIDER`: `demo` (default; a built-in sample registry) or `manual` (staff search the [CDSS registry](https://www.ccld.dss.ca.gov/hcsregistry/registrysearch.aspx) and record what it shows).
 - In demo mode, correct a record's registration number to try each outcome: `DEMO-EXEMPT`, `DEMO-REVIEW`, `DEMO-PENDING`, `DEMO-CLOSED`, `DEMO-DENIED`, `DEMO-FORFEITED`, `DEMO-REVOKED` (any name), or `ZZZ99999` for no match.
 - There is no provider that calls the CDSS website. It has no documented API, its Conditions of Use were not reviewed, and the ID format is not published, so ID validation is deliberately loose. Get CDSS's OK before automating (HCSB@dss.ca.gov).
-- Supabase: run `supabase/migrations/20261017000004_registry_check.sql` (adds `submissions.registry_check`).
+- Supabase: run `supabase/migrations/20261017000005_registry_check.sql` (adds `submissions.registry_check`).
 - `npm test` runs the registry and agent-flow tests.
 
 ## Project structure
@@ -139,3 +139,11 @@ When a Home Care Aide registration is submitted, the agent looks the aide up on 
 ## Disclaimer
 
 The requirement checklist in `lib/seed.ts` is a simplified demo version. Check it against current California Home Care Services Bureau requirements before using it for real compliance work. All people, phone numbers and documents in the sample data are fictional.
+
+## Nationwide regulatory watch
+
+The new `/regulatory` workspace adds a 50-state source registry, durable monitoring jobs, RunAnywhere extraction with cited evidence, agency/worker onboarding, rule review and adoption, and a private evidence checklist. The original dashboard remains a separate demonstration.
+
+For a presentation, run `npm run demo`, open `http://127.0.0.1:3000/regulatory`, and click **Reset guided demo**. This clearly labelled simulated policy scenario requires no account or API spend and does not touch Supabase team data.
+
+See [the demo and operational guide](docs/regulatory-demo.md) for live Supabase setup, worker commands, verification, and current coverage boundaries. Use Node 24 or later.
