@@ -258,8 +258,8 @@ export function seedDb(): Db {
   return {
     version: 1,
     agency: { name: 'Sunrise Home Care', admin: 'Dana (Admin)' },
-    rules: { ...DEFAULT_RULES, requirements: REQUIREMENTS },
-    caregivers: CAREGIVERS,
+    rules: { ...DEFAULT_RULES, requirements: REQUIREMENTS.map((r) => ({ ...r })) },
+    caregivers: CAREGIVERS.map((c) => ({ ...c })),
     requirements: reqs,
     submissions: subs,
     messages,

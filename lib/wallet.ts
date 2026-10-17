@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { isUnconfirmed } from './fields';
+import { normalizePhone } from './phone';
 import { extraNo, extraYes, packFor, type WalletKind } from './languages';
 import { splitName, foldName } from './registry';
 import type { AuditEvent, Caregiver, Db, RequirementState, Submission } from './types';
@@ -48,12 +49,7 @@ const pepper = () => {
   return 'dev-only-pepper';
 };
 
-export function normalizePhone(raw: string): string {
-  const d = raw.replace(/\D/g, '');
-  const n = d.length === 10 ? `1${d}` : d;
-  if (n.length < 10 || n.length > 15) throw new Error('That phone number cannot be used to find a wallet.');
-  return `+${n}`;
-}
+export { normalizePhone };
 
 /** The wallet is keyed by a keyed hash of the caregiver's phone number, so the store never holds the number itself. */
 export const holderKey = (phone: string) => createHmac('sha256', pepper()).update(normalizePhone(phone)).digest('hex');

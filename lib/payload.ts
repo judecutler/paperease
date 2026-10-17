@@ -1,6 +1,7 @@
 import { aiStatus } from './llm';
 import { registryInfo } from './registry-providers';
 import { sampleDocs } from './samples';
+import { smsStatus } from './sms';
 import type { Db } from './types';
 
 export function payload(db: Db) {
@@ -8,6 +9,7 @@ export function payload(db: Db) {
     db,
     ai: aiStatus(),
     registry: registryInfo(),
+    sms: smsStatus(),
     samples: sampleDocs().map(({ id, label, file }) => ({ id, label, file })),
   };
 }

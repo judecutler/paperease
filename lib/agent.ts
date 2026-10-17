@@ -1,6 +1,7 @@
 import { load, newId, readDoc, save, reset, writeDoc } from './db';
 import { draftSms, extractDocument, interpretReply, isOptOut, templateSms, type SmsKind } from './llm';
 import { isLangCode, languageLabel } from './languages';
+import { SmsError, sendSms, smsStatus } from './sms';
 import { findSample } from './samples';
 import { isUnconfirmed } from './fields';
 import {
@@ -31,6 +32,7 @@ export type Action =
   | { type: 'wallet-offer-share'; caregiverId: string }
   | { type: 'wallet-request'; caregiverId: string }
   | { type: 'wallet-withdraw'; caregiverId: string }
+  | { type: 'sms-delivery-failed'; caregiverId: string; code?: number }
   | { type: 'reset' };
 
 const OPEN: RequirementState['status'][] = ['requested', 'following-up'];
@@ -39,6 +41,8 @@ const now = () => new Date().toISOString();
 class Ctx {
   walletDoc?: WalletDoc;
   walletDirty = false;
+  /** texts waiting to leave the server; sent once the action has finished (see flushOutbox) */
+  outbox: { caregiverId: string; text: string; force: boolean }[] = [];
   constructor(public db: Db) {}
   caregiver(id: string) {
     const c = this.db.caregivers.find((x) => x.id === id);
@@ -64,8 +68,9 @@ class Ctx {
     this.db.audit.push({ id: newId('ev'), time: now(), ...e });
   }
   /** Every outgoing text goes through here. */
-  send(cg: Caregiver, text: string) {
+  send(cg: Caregiver, text: string, force = false) {
     this.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text, time: now() });
+    if (smsStatus().mode === 'live') this.outbox.push({ caregiverId: cg.id, text, force });
   }
   async sms(kind: SmsKind, cg: Caregiver, req: RequirementType, extra: { missingField?: { key: string; label: string }; documentType?: string } = {}) {
     if (cg.optedOut && kind !== 'opted-out') return;
@@ -257,7 +262,7 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
       s.explanation = `${cg.firstName} opted out of texts. Staff need to collect this directly.`;
       if (s.openSubmissionId) Object.assign(c.sub(s.openSubmissionId), { state: 'escalated', escalation: s.explanation });
     }
-    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: (await draftSms('opted-out', { caregiver: cg, requirement: c.req('tb_test') })), time: now() });
+    c.send(cg, await draftSms('opted-out', { caregiver: cg, requirement: c.req('tb_test') }), true);
     return;
   }
 
@@ -267,7 +272,7 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
   c.log({ caregiverId: cg.id, requirementId: state?.requirementId, actor: 'caregiver', who: cg.name, action: file ? 'replied with a photo' : 'replied by text', detail: file ? file.name : `"${text}"` });
   if (!state) {
     c.log({ caregiverId: cg.id, actor: 'agent', action: 'escalated an unexpected message', detail: 'No open request for this caregiver. Left for staff.' });
-    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: templateSms('passed-on', { caregiver: cg, requirement: c.db.rules.requirements[0] }), time: now() });
+    c.send(cg, templateSms('passed-on', { caregiver: cg, requirement: c.db.rules.requirements[0] }));
     return;
   }
   const req = c.req(state.requirementId);
@@ -443,6 +448,30 @@ async function walletConsent(c: Ctx, cg: Caregiver, text: string): Promise<boole
   return true;
 }
 
+/* ---------------- outgoing texts ---------------- */
+
+// Sends what the action queued. A failure never loses the work: the message stays in the thread and the audit trail says it did not go out.
+async function flushOutbox(c: Ctx) {
+  for (const m of c.outbox.splice(0)) {
+    const cg = c.caregiver(m.caregiverId);
+    if (!m.force && (!cg.smsConsent || cg.optedOut)) {
+      c.log({ caregiverId: cg.id, actor: 'system', action: 'did not send a text', detail: `${cg.firstName} has not agreed to texts or has opted out.` });
+      continue;
+    }
+    try {
+      await sendSms(cg.phone, m.text);
+    } catch (err) {
+      const code = err instanceof SmsError ? err.code : null;
+      if (code === 21610) {
+        cg.optedOut = true;
+        if (!m.force) c.log({ caregiverId: cg.id, actor: 'system', action: 'marked as opted out', detail: 'The carrier reports this number has stopped messages from CareLoop.' });
+      } else {
+        c.log({ caregiverId: cg.id, actor: 'system', action: 'a text could not be sent', detail: err instanceof SmsError ? `Twilio error ${code}: ${err.message}` : 'The messaging service could not be reached.' });
+      }
+    }
+  }
+}
+
 /* ---------------- daily sweep ---------------- */
 
 const REMINDER_ACTIONS = ['sent a reminder', 'sent an automatic reminder'];
@@ -596,6 +625,17 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       settleRegistry(sub, c.state(sub.caregiverId, sub.requirementId));
       break;
     }
+    case 'sms-delivery-failed': {
+      // reported by the carrier webhook; code 21610 means the person replied STOP to the carrier directly
+      const cg = c.caregiver(action.caregiverId);
+      if (action.code === 21610) {
+        cg.optedOut = true;
+        c.log({ caregiverId: cg.id, actor: 'system', action: 'marked as opted out', detail: 'The carrier reports this number has stopped messages from CareLoop.' });
+      } else {
+        c.log({ caregiverId: cg.id, actor: 'system', action: 'a text was not delivered', detail: action.code ? `Carrier error ${action.code}.` : 'The carrier could not deliver it.' });
+      }
+      break;
+    }
     case 'export-packet': {
       // exporting a personnel file is itself an access to personal data, so it is written to the audit trail
       const cg = c.caregiver(action.caregiverId);
@@ -686,6 +726,7 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       break;
     }
   }
+  await flushOutbox(c);
   if (c.walletDirty && c.walletDoc) await writeDoc(WALLET_KEY, c.walletDoc);
   if (!suppliedDb) await save(db);
   return db;
