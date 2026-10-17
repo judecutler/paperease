@@ -11,8 +11,8 @@ let setDemoRegistryStatus: typeof import('../lib/registry-providers').setDemoReg
 let dir: string;
 
 before(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'careloop-test-'));
-  process.env.CARELOOP_DATA_DIR = dir;
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'paperease-test-'));
+  process.env.PAPEREASE_DATA_DIR = dir;
   for (const k of ['ANTHROPIC_API_KEY', 'SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'RUNANYWHERE_BASE_URL', 'RUNANYWHERE_API_KEY', 'REGISTRY_PROVIDER']) delete process.env[k];
   ({ run } = await import('../lib/agent'));
   ({ setDemoRegistryStatus } = await import('../lib/registry-providers'));

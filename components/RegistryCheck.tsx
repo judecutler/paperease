@@ -1,12 +1,12 @@
 'use client';
 import { useState } from 'react';
 import { Button, Icon } from '@/components/ui';
-import { timeLabel, type useCareLoop } from '@/components/useCareLoop';
+import { timeLabel, type usePaperEase } from '@/components/usePaperEase';
 import type { Payload } from '@/lib/payload';
 import { assess, REGISTRY_STATUS_DEFINITIONS_URL } from '@/lib/registry';
 import type { RegistryStatus, Submission } from '@/lib/types';
 
-type Act = ReturnType<typeof useCareLoop>['act'];
+type Act = ReturnType<typeof usePaperEase>['act'];
 
 const TONE = { pass: 'pine', blocked: 'danger', 'not-found': 'attention', unchecked: 'attention' } as const;
 

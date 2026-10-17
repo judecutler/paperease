@@ -77,7 +77,7 @@ export default function RegulatoryPage() {
       <Shell>
         <div className="page-head">
           <div>
-            <div className="eyebrow">CareLoop</div>
+            <div className="eyebrow">PaperEase</div>
             <h1>Regulatory watch</h1>
             <p>Official sources. Cited changes. Reviewed obligations.</p>
           </div>

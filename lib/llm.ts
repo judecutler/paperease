@@ -10,7 +10,7 @@ import { readUpload } from './db';
 // Every AI call sits behind an env key and falls back to deterministic behavior,
 // so the demo runs end to end with no keys at all.
 
-const MODEL = process.env.CARELOOP_MODEL || 'claude-opus-5-5';
+const MODEL = process.env.PAPEREASE_MODEL || 'claude-opus-5-5';
 
 let client: Anthropic | null = null;
 function claude() {
@@ -58,12 +58,18 @@ export interface SmsContext {
   documentType?: string;
 }
 
+/** what the agency needs, in the caregiver's language, e.g. "a photo of your Home Care Aide registration" */
+export const askFor = (req: RequirementType, language: Caregiver['language']) => (language === 'es' && ASK_ES[req.id]) || req.ask;
+/** a field name in the caregiver's language, e.g. "the training hours" without the article in English */
+export const fieldName = (field: { key: string; label: string }, language: Caregiver['language']) =>
+  (language === 'es' && FIELD_ES[field.key]) || field.label.toLowerCase();
+
 export function templateSms(kind: SmsKind, c: SmsContext): string {
   const first = c.caregiver.firstName;
   const es = c.caregiver.language === 'es';
-  const ask = es ? ASK_ES[c.requirement.id] || c.requirement.ask : c.requirement.ask;
+  const ask = askFor(c.requirement, c.caregiver.language);
   const doc = (c.documentType || 'document').toLowerCase();
-  const field = c.missingField ? (es ? FIELD_ES[c.missingField.key] || c.missingField.label.toLowerCase() : c.missingField.label.toLowerCase()) : '';
+  const field = c.missingField ? fieldName(c.missingField, c.caregiver.language) : '';
   if (es) {
     switch (kind) {
       case 'request': return `¡Hola ${first}! Tu agencia necesita ${ask}. ¿Puedes responder con una foto?`;
@@ -73,7 +79,7 @@ export function templateSms(kind: SmsKind, c: SmsContext): string {
       case 'wrong-doc': return `¡Gracias, ${first}! Esto parece ser otro documento. Necesitamos ${ask}. ¿Puedes enviarlo?`;
       case 'reminder': return `Hola ${first}, un recordatorio: tu agencia todavía necesita ${ask}. Responde con una foto cuando puedas.`;
       case 'request-another': return `Hola ${first}, la oficina no pudo usar la imagen anterior. ¿Puedes enviar otra vez ${ask}, con una foto clara?`;
-      case 'opted-out': return 'Ya no recibirás mensajes de CareLoop. Tu agencia te contactará directamente.';
+      case 'opted-out': return 'Ya no recibirás mensajes de PaperEase. Tu agencia te contactará directamente.';
       case 'approved': return `¡Gracias, ${first}! Tu documento fue aprobado. No necesitas hacer nada más.`;
     }
   }
@@ -85,7 +91,7 @@ export function templateSms(kind: SmsKind, c: SmsContext): string {
     case 'wrong-doc': return `Thanks, ${first}! This looks like a ${doc}. We need ${ask}. Could you send that one?`;
     case 'reminder': return `Hi ${first}, just a reminder: your agency still needs ${ask}. Reply with a photo whenever you can.`;
     case 'request-another': return `Hi ${first}, the office couldn't use the last one. Could you send ${ask} again as a clear photo?`;
-    case 'opted-out': return "You're unsubscribed from CareLoop texts. Your agency will contact you directly.";
+    case 'opted-out': return "You're unsubscribed from PaperEase texts. Your agency will contact you directly.";
     case 'approved': return `Thanks, ${first}! Your document is approved. Nothing else needed.`;
   }
 }
@@ -109,7 +115,7 @@ ${c.missingField ? `Field we could not find: ${c.missingField.label}\n` : ''}${c
     const clean = text?.trim().replace(/^"|"$/g, '');
     return clean && clean.length <= 320 ? clean : fallback;
   } catch (err) {
-    console.warn('[careloop] SMS drafting fell back to template:', (err as Error).message);
+    console.warn('[paperease] SMS drafting fell back to template:', (err as Error).message);
     return fallback;
   }
 }
@@ -226,7 +232,7 @@ export async function extractDocument(req: RequirementType, fileUrl: string, sam
         };
       }
     } catch (err) {
-      console.warn('[careloop] Claude extraction failed, using fallback:', (err as Error).message);
+      console.warn('[paperease] Claude extraction failed, using fallback:', (err as Error).message);
     }
   }
   const sample = sampleId ? findSample(sampleId) : undefined;
@@ -268,7 +274,7 @@ export async function interpretReply(text: string, field: { key: string; label: 
       });
       if (res.parsed_output) return res.parsed_output;
     } catch (err) {
-      console.warn('[careloop] reply interpretation fell back to rules:', (err as Error).message);
+      console.warn('[paperease] reply interpretation fell back to rules:', (err as Error).message);
     }
   }
   if (field.kind === 'number') {

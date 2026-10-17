@@ -52,7 +52,7 @@ export default function WorkerInboxPage() {
   }
   return (
     <main className="reg-worker-page">
-      <div className="reg-worker-brand">CareLoop</div>
+      <div className="reg-worker-brand">PaperEase</div>
       <div className="page-head">
         <div>
           <div className="eyebrow">Your work updates</div>
@@ -143,7 +143,7 @@ export default function WorkerInboxPage() {
                 <span className="reg-notice-label">
                   {m.acknowledgedAt ? "Acknowledged" : "New requirement"}
                 </span>
-                <span className="small muted">CareLoop agent</span>
+                <span className="small muted">PaperEase agent</span>
               </div>
               <h2>{m.title}</h2>
               <p>{m.body}</p>

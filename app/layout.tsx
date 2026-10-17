@@ -4,7 +4,7 @@ import './components.css';
 import './app.css';
 
 export const metadata: Metadata = {
-  title: 'CareLoop AI',
+  title: 'PaperEase',
   description: 'Less chasing. More caring. Compliance documentation agent for home care agencies.',
 };
 

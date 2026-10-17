@@ -1,4 +1,4 @@
-// TSX port of the CareLoop design system reference components (design-system/reference-components.js).
+// TSX port of the PaperEase design system reference components (design-system/reference-components.js).
 // Class names match app/components.css.
 import type React from 'react';
 import type { DocStatus } from '@/lib/types';
@@ -76,7 +76,7 @@ export function ExtractedField(props: {
     meta = (
       <span className={cx('cl-field-tag', low ? 'cl-tone-attention' : 'cl-tone-agent')}>
         <Icon name="spark" />
-        {source === 'caregiver' ? 'From SMS reply' : 'AI'}
+        {source === 'caregiver' ? 'From caregiver' : 'AI'}
         {typeof props.confidence === 'number' ? ` · ${Math.round(props.confidence * 100)}%` : ''}
         {low ? ' · check this' : ''}
       </span>
@@ -105,7 +105,7 @@ export function ApprovalBar(props: { unverified?: number; note?: string; /** a r
     <div className="cl-approval" role="region" aria-label="Approval">
       <div className="cl-approval-text">
         <strong>{n > 0 ? `Verify ${n} field${n > 1 ? 's' : ''} to approve` : held ? 'Approval is on hold' : 'Ready for your approval'}</strong>
-        <span className="cl-muted cl-small">{props.note || (n === 0 && props.blocker) || 'CareLoop never approves a record on its own.'}</span>
+        <span className="cl-muted cl-small">{props.note || (n === 0 && props.blocker) || 'PaperEase never approves a record on its own.'}</span>
       </div>
       <div className="cl-approval-actions">
         <Button variant="quiet" onClick={props.onReject} disabled={props.busy}>Reject</Button>
@@ -117,6 +117,10 @@ export function ApprovalBar(props: { unverified?: number; note?: string; /** a r
 }
 
 export interface SmsBubble { id: string; from: 'agent' | 'admin' | 'caregiver'; text?: string; time?: string; attachment?: { name: string; url: string; mime: string } }
+
+// upload links in agent texts open the caregiver's page
+const linkify = (text: string) =>
+  text.split(/(https?:\/\/\S+)/).map((part, i) => (i % 2 ? <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a> : part));
 
 export function SmsThread({ contact, number, messages, footer, bodyRef }: { contact?: string; number?: string; messages: SmsBubble[]; footer?: React.ReactNode; bodyRef?: React.Ref<HTMLDivElement> }) {
   return (
@@ -145,9 +149,9 @@ export function SmsThread({ contact, number, messages, footer, bodyRef }: { cont
                     <span>{m.attachment.name}</span>
                   </a>
                 ))}
-              {m.text && <div className={cx('cl-sms-bubble', m.from === 'admin' && 'cl-sms-admin')}>{m.text}</div>}
+              {m.text && <div className={cx('cl-sms-bubble', m.from === 'admin' && 'cl-sms-admin')}>{linkify(m.text)}</div>}
               <div className="cl-sms-meta cl-data">
-                {m.from === 'agent' ? 'CareLoop agent' : m.from === 'admin' ? 'Agency staff' : 'Caregiver'}
+                {m.from === 'agent' ? 'PaperEase agent' : m.from === 'admin' ? 'Agency staff' : 'Caregiver'}
                 {m.time ? ` · ${m.time}` : ''}
               </div>
             </div>
@@ -159,7 +163,7 @@ export function SmsThread({ contact, number, messages, footer, bodyRef }: { cont
   );
 }
 
-const ACTOR = { agent: 'CareLoop agent', admin: 'Admin', caregiver: 'Caregiver', system: 'System' } as const;
+const ACTOR = { agent: 'PaperEase agent', admin: 'Admin', caregiver: 'Caregiver', system: 'System' } as const;
 export function AuditTrail({ events }: { events: { id: string; actor: keyof typeof ACTOR; who?: string; action: string; detail?: React.ReactNode; time: string }[] }) {
   if (!events.length) return <p className="cl-muted cl-small">Nothing recorded yet.</p>;
   return (

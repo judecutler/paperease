@@ -63,7 +63,7 @@ export function RegulatoryNotifications({
           <span>In-app messages</span>
         </div>
         <p className="muted small">
-          CareLoop publishes an assignment-specific message after an
+          PaperEase publishes an assignment-specific message after an
           administrator approves and adopts a requirement. Messages below are an
           agency preview; the worker signs in to their own inbox to acknowledge
           them. No SMS or email has been sent.
@@ -103,7 +103,7 @@ export function RegulatoryNotifications({
               </span>
             </div>
             <p className="small muted">
-              CareLoop agent · {new Date(m.createdAt).toLocaleString()}
+              PaperEase agent · {new Date(m.createdAt).toLocaleString()}
               {m.demo ? " · Simulated demo" : ""}
             </p>
             <h4>{m.title}</h4>

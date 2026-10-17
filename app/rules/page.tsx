@@ -2,20 +2,22 @@
 import { useEffect, useState } from 'react';
 import { Shell } from '@/components/Shell';
 import { Button } from '@/components/ui';
-import { useCareLoop } from '@/components/useCareLoop';
+import { usePaperEase } from '@/components/usePaperEase';
 
 export default function RulesPage() {
-  const { data, busy, error, setError, act } = useCareLoop();
+  const { data, busy, error, setError, act } = usePaperEase();
   const [form, setForm] = useState({ expiringWithinDays: 30, minConfidence: 60, maxFollowUps: 2, autoRequest: false, reminderAfterDays: 1, maxReminders: 2 });
+  // refill the form only when the saved rules change, so a background refresh does not wipe unsaved edits
+  const saved = data ? JSON.stringify({ ...data.db.rules, requirements: undefined }) : '';
   useEffect(() => {
     if (!data) return;
     const r = data.db.rules;
     setForm({ expiringWithinDays: r.expiringWithinDays, minConfidence: Math.round(r.minConfidence * 100), maxFollowUps: r.maxFollowUps, autoRequest: r.autoRequest, reminderAfterDays: r.reminderAfterDays, maxReminders: r.maxReminders });
-  }, [data]);
+  }, [saved]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!data) return <Shell error={error}><p className="loading">Loading…</p></Shell>;
   const { rules } = data.db;
   return (
-    <Shell ai={data.ai} error={error} onDismiss={() => setError(null)}>
+    <Shell ai={data.ai} me={data.me} error={error} onDismiss={() => setError(null)}>
       <div className="page-head">
         <div>
           <div className="eyebrow">Configuration</div>

@@ -58,7 +58,7 @@ export async function identity(req: Request): Promise<{ id: string }> {
     ?.slice(17);
   const token =
     req.headers.get("authorization")?.replace(/^Bearer /, "") || cookie;
-  if (!token) throw new HttpError(401, "Sign in to your CareLoop workspace.");
+  if (!token) throw new HttpError(401, "Sign in to your PaperEase workspace.");
   let user;
   try {
     user = await supabase("/auth/v1/user", {

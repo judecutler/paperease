@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Shell } from '@/components/Shell';
 import { ApprovalBar, AuditTrail, Button, EscalationNotice, ExtractedField, SmsThread, StatusBadge } from '@/components/ui';
 import { RegistryCheckCard } from '@/components/RegistryCheck';
-import { dateLabel, timeLabel, useCareLoop } from '@/components/useCareLoop';
+import { dateLabel, timeLabel, usePaperEase } from '@/components/usePaperEase';
 import { approvalBlocker, needsRegistryCheck } from '@/lib/registry';
 import type { Payload } from '@/lib/payload';
 import type { ExtractedFieldValue, RequirementState, RequirementType, Submission } from '@/lib/types';
@@ -13,7 +13,7 @@ const unverified = (s: Submission) =>
   s.fields.filter((f) => (f.value !== null && (f.source === 'ai' || f.source === 'caregiver')) || (f.required && f.value === null)).length;
 
 export function CaregiverView({ id, initialReq }: { id: string; initialReq?: string }) {
-  const { data, busy, error, setError, act } = useCareLoop();
+  const { data, busy, error, setError, act } = usePaperEase();
   const [selected, setSelected] = useState<string | undefined>(initialReq);
 
   const db = data?.db;
@@ -28,7 +28,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
   }, [db]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!data || !db) return <Shell error={error}><p className="loading">Loading…</p></Shell>;
-  if (!cg) return <Shell ai={data.ai}><p className="loading">No caregiver with this id. <Link href="/">Back to dashboard</Link></p></Shell>;
+  if (!cg) return <Shell ai={data.ai} me={data.me}><p className="loading">No caregiver with this id. <Link href="/">Back to dashboard</Link></p></Shell>;
 
   const selState = states.find((s) => s.requirementId === selected);
   const subId = selState?.openSubmissionId || selState?.approvedSubmissionId;
@@ -41,7 +41,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
   const approvedCount = states.filter((s) => s.status === 'approved').length;
 
   return (
-    <Shell ai={data.ai} error={error} onDismiss={() => setError(null)}>
+    <Shell ai={data.ai} me={data.me} error={error} onDismiss={() => setError(null)}>
       <div className="page-head">
         <div>
           <div className="eyebrow"><Link href="/">Dashboard</Link> / Caregiver</div>
@@ -98,7 +98,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
   );
 }
 
-type Act = ReturnType<typeof useCareLoop>['act'];
+type Act = ReturnType<typeof usePaperEase>['act'];
 
 function RequirementRow({ s, req, selected, busy, onSelect, act }: { s: RequirementState; req: RequirementType; selected: boolean; busy: boolean; onSelect: () => void; act: Act }) {
   return (

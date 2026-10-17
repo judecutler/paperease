@@ -35,7 +35,7 @@ import { resetDemo } from "../lib/regulatory/demo";
 import { collectionAction, syncCollection } from "../lib/regulatory/collection";
 let dir: string;
 before(async () => {
-  dir = await mkdtemp(path.join(os.tmpdir(), "careloop-test-"));
+  dir = await mkdtemp(path.join(os.tmpdir(), "paperease-test-"));
   process.env.REGULATORY_LOCAL_DEMO = "true";
   process.env.REGULATORY_DATA_DIR = dir;
 });
