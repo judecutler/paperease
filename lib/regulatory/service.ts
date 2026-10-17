@@ -243,6 +243,8 @@ export async function command(ctx: Context, input: unknown) {
     await mutate(agencyKey(ctx.agencyId), emptyAgency, (a) => {
       const action = a.actions.find((x) => x.id === v.id);
       if (!action) throw new HttpError(404, "Action not found.");
+      if (a.collection?.rules.requirements.some((r) => r.id === action.ruleId) || ["document", "training", "renewal"].includes(action.kind))
+        throw new HttpError(409, "Documentary evidence must be approved before completing this obligation.");
       action.status = "done";
       a.audit.push({
         at: now(),

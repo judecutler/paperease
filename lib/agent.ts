@@ -69,7 +69,7 @@ class Ctx {
     // appended after drafting so the model never writes or sees the URL
     const subId = this.db.requirements.find((s) => s.caregiverId === cg.id && s.requirementId === req.id)?.openSubmissionId;
     const link = this.origin && subId && LINK_KINDS.includes(kind) ? linkUrl(this.origin, subId) : null;
-    if (link) text += `\n${cg.language === 'es' ? 'O súbelo aquí' : 'Or upload it here'}: ${link}`;
+    if (link) text += `\nOr upload it here: ${link}`;
     this.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text, time: now() });
     return text;
   }
@@ -264,7 +264,7 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
       : 'Choose one open document request before sending a photo. This attachment was left for staff and was not analyzed.';
     if (file) message.photoCheck = uncheckedPhoto(reason);
     c.log({ caregiverId: cg.id, actor: 'agent', action: 'left an unmatched message for staff', detail: reason });
-    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: cg.language === 'es' ? 'Selecciona una solicitud de documento abierta o contacta a la oficina.' : 'Please select an open document request or contact the office.', time: now() });
+    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: 'Please select an open document request or contact the office.', time: now() });
     return;
   }
   const req = c.req(state.requirementId);
@@ -359,7 +359,7 @@ async function authorize(c: Ctx, caregiverId: string, requirementId: string, by:
   if (by === 'admin') c.log({ caregiverId, requirementId, actor: 'admin', who: c.admin, action: 'authorized outreach' });
   else c.log({ caregiverId, requirementId, actor: 'system', action: 'authorized outreach by rule', detail: 'Automatic requests are on in Rules.' });
   await c.sms('request', cg, req);
-  c.log({ caregiverId, requirementId, actor: 'agent', action: cg.language === 'es' ? 'sent an SMS request in Spanish' : 'sent an SMS request', detail: cg.phone });
+  c.log({ caregiverId, requirementId, actor: 'agent', action: 'sent an SMS request', detail: cg.phone });
   return true;
 }
 
@@ -621,7 +621,7 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
       const name = action.name.trim();
       if (!name) throw new Error('Name is required.');
       const id = newId('cg');
-      db.caregivers.push({ id, name, firstName: name.split(/\s+/)[0], phone: action.phone.trim(), language: action.language, hiredOn: now().slice(0, 10), smsConsent: true });
+      db.caregivers.push({ id, name, firstName: name.split(/\s+/)[0], phone: action.phone.trim(), language: 'en', hiredOn: now().slice(0, 10), smsConsent: true });
       for (const r of db.rules.requirements) {
         db.requirements.push({ caregiverId: id, requirementId: r.id, status: 'missing', explanation: `No ${r.name.toLowerCase()} on file. ${r.rule}` });
       }

@@ -1,0 +1,114 @@
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { resetDemo } from "../lib/regulatory/demo";
+import { complianceView, demoEvidence, reviewEvidence, workerFile, submitEvidence, adminContext } from "../lib/regulatory/compliance";
+import { command, state, CORPUS, agencyKey } from "../lib/regulatory/service";
+import { readDoc, mutate } from "../lib/regulatory/store";
+import { emptyAgency, type Context } from "../lib/regulatory/types";
+import { initialCorpus } from "../lib/regulatory/jurisdictions";
+import { acknowledgeWorkerNotice, workerInbox } from "../lib/regulatory/worker-inbox";
+import { workerContext } from "../lib/regulatory/auth";
+let dir: string;
+const ctx: Context = { agencyId: "compliance-test", userId: "admin-test", role: "admin", local: true };
+const worker = { agencyId: ctx.agencyId, workerId: "demo-maria", userId: "worker-test", local: true };
+const workerRule = "rule:guided-demo:training-v2";
+const companyRule = "rule:guided-demo:agency-v1";
+before(async () => { dir = await mkdtemp(path.join(os.tmpdir(), "paperease-compliance-")); process.env.REGULATORY_LOCAL_DEMO = "true"; process.env.REGULATORY_DATA_DIR = dir; });
+after(async () => { await rm(dir, { recursive: true, force: true }); });
+async function adopt(id: string) {
+  await command(ctx, { type: "review", ruleId: id, decision: "approved", note: "Explicitly simulated policy, reviewed for this isolated test." });
+  const rule = (await state(ctx)).candidates.find((r) => r.id === id)!;
+  await command(ctx, { type: "adopt", ruleId: id, fingerprint: rule.fingerprint });
+}
+async function own() { return (await complianceView(adminContext(worker), worker.workerId)).items[0]; }
+test("adoption → worker notification → incomplete/expired/replacement → human approval → shared persistence → new rule", async () => {
+  await resetDemo(ctx); await adopt(workerRule); await adopt(companyRule);
+  let view = await complianceView(ctx);
+  assert.equal(view.items.length, 2);
+  assert.equal(view.items.find((i) => i.caregiverId === "agency")!.status, "missing");
+  const inbox = await workerInbox(worker);
+  assert.equal(inbox.messages.length, 1);
+  await acknowledgeWorkerNotice(worker, inbox.messages[0].id);
+  assert.equal((await own()).status, "missing");
+  await assert.rejects(command(ctx, { type: "action-complete", id: (await state(ctx)).agency.actions[0].id, note: "Read the notification" }));
+  await demoEvidence(adminContext(worker), { requirementId: workerRule, caregiverId: worker.workerId, fixture: "incomplete" }, worker.workerId);
+  let item = await own();
+  assert.equal(item.status, "incomplete");
+  assert.match(item.submissions[0].analysis!.nextStep, /Training hours/);
+  await assert.rejects(reviewEvidence(ctx, { type: "approve", submissionId: item.openSubmissionId, attest: true }));
+  await demoEvidence(adminContext(worker), { requirementId: workerRule, caregiverId: worker.workerId, fixture: "expired" }, worker.workerId);
+  assert.equal((await own()).status, "expired");
+  await demoEvidence(adminContext(worker), { requirementId: workerRule, caregiverId: worker.workerId, fixture: "complete" }, worker.workerId);
+  item = await own();
+  assert.equal(item.status, "review");
+  assert.equal(item.submissions.length, 3);
+  await assert.rejects(reviewEvidence({ ...ctx, role: "viewer" }, { type: "approve", submissionId: item.openSubmissionId, attest: true }));
+  await reviewEvidence(ctx, { type: "approve", submissionId: item.openSubmissionId, attest: true });
+  assert.equal((await own()).status, "approved");
+  assert.equal((await complianceView(ctx)).items.find((i) => i.caregiverId === worker.workerId)!.status, "approved");
+  assert.equal((await readDoc(agencyKey(ctx.agencyId), emptyAgency)).data.collection!.submissions.length, 3);
+  await demoEvidence(ctx, { requirementId: companyRule, caregiverId: "agency", fixture: "complete" });
+  view = await complianceView(ctx);
+  const company = view.items.find((i) => i.caregiverId === "agency")!;
+  await reviewEvidence(ctx, { type: "approve", submissionId: company.openSubmissionId, attest: true });
+  assert.equal((await complianceView(ctx)).items.find((i) => i.caregiverId === "agency")!.status, "approved");
+  assert.equal((await complianceView(adminContext(worker), worker.workerId)).items.length, 1);
+  // Simulate a reviewed new rule version. Do not erase old evidence or silently copy its approval.
+  await mutate(CORPUS, initialCorpus, (c) => { const old = c.candidates.find((r) => r.id === workerRule)!; c.candidates.push({ ...old, id: "rule:guided-demo:training-v3", previousId: old.id, title: "Demo revised training", obligation: "A revised simulated policy requires six hours of safety training." }); });
+  await adopt("rule:guided-demo:training-v3");
+  item = await own();
+  assert.equal(item.requirementId, "rule:guided-demo:training-v3");
+  assert.equal(item.status, "missing");
+  assert.equal(item.requirement.contractConfirmed, false);
+  assert.equal(item.reevaluationRequired, true);
+  const history = (await complianceView(adminContext(worker), worker.workerId)).history;
+  assert.equal(history.length, 3);
+  assert.equal(history.filter((s) => s.state === "approved").length, 1);
+  await assert.rejects(reviewEvidence(ctx, { type: "approve", submissionId: history[2].id, attest: true }));
+});
+test("unavailable AI retains the real upload, never reports success; private worker downloads reject other identities", async () => {
+  await resetDemo(ctx); await adopt(workerRule);
+  const form = new FormData();
+  form.set("requirementId", workerRule); form.set("caregiverId", "someone-else");
+  form.set("file", new File(["synthetic PDF body, not an actual certificate"], "test.pdf", { type: "application/pdf" }));
+  await submitEvidence(adminContext(worker), form, worker.workerId);
+  const item = await own();
+  const sub = item.submissions[0];
+  assert.equal(sub.analysis!.status, "not-checked"); assert.equal(sub.extractedBy, "none"); assert.notEqual(item.status, "approved");
+  const fileId = sub.files[0].url.split("/").pop()!;
+  const file = await workerFile(worker, fileId);
+  assert.match(Buffer.from(file.bytes, "base64").toString(), /synthetic PDF/);
+  await assert.rejects(workerFile({ ...worker, workerId: "someone-else" }, fileId), /not found/);
+  await assert.rejects(workerFile({ ...worker, agencyId: "another-agency" }, fileId), /not found/);
+  await assert.rejects(complianceView(adminContext(worker), "someone-else"), /not found/);
+  await mutate(agencyKey(ctx.agencyId), emptyAgency, (a) => a.workers.push({ ...a.workers[0], id: "second-worker", name: "Other Person" }));
+  const otherView = await complianceView(adminContext(worker), "second-worker");
+  assert.equal(otherView.items[0].submissions.length, 0); assert.equal(otherView.history.length, 0);
+  await assert.rejects(workerFile({ ...worker, workerId: "second-worker" }, fileId), /not found/);
+});
+test("hosted worker identity ignores the client workerId", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.SUPABASE_URL; const previousKey = process.env.SUPABASE_SECRET_KEY;
+  process.env.REGULATORY_LOCAL_DEMO = "false";
+  process.env.SUPABASE_URL = "https://test.invalid"; process.env.SUPABASE_SECRET_KEY = "synthetic-test-key";
+  globalThis.fetch = async (url) => {
+    const address = String(url);
+    const body = address.includes("/auth/v1/user") ? { id: "authenticated-user" } : address.includes("reg_worker_memberships") ? [{ agency_id: "real-agency", worker_id: "real-worker" }] : [{ body: { name: "private.pdf", mime: "application/pdf", bytes: Buffer.from("private evidence").toString("base64"), workerId: address.includes("11111111") ? "someone-else" : "real-worker" }, revision: 1 }];
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+  try {
+    const result = await workerContext(new Request("https://app.invalid/api/regulatory/worker-compliance?workerId=someone-else", { headers: { authorization: "Bearer test-session" } }));
+    assert.equal(result.workerId, "real-worker"); assert.equal(result.agencyId, "real-agency");
+    const { GET } = await import("../app/api/regulatory/[...path]/route");
+    const request = (id: string) => new Request(`https://app.invalid/api/regulatory/worker-files/${id}?workerId=someone-else`, { headers: { authorization: "Bearer test-session" } });
+    const foreign = "11111111-1111-4111-8111-111111111111";
+    const own = "22222222-2222-4222-8222-222222222222";
+    assert.equal((await GET(request(foreign), { params: Promise.resolve({ path: ["worker-files", foreign] }) })).status, 404);
+    const download = await GET(request(own), { params: Promise.resolve({ path: ["worker-files", own] }) });
+    assert.equal(download.status, 200); assert.equal(await download.text(), "private evidence");
+    assert.equal(download.headers.get("cache-control"), "private, no-store");
+  } finally { globalThis.fetch = originalFetch; process.env.REGULATORY_LOCAL_DEMO = "true"; process.env.SUPABASE_URL = previousUrl; process.env.SUPABASE_SECRET_KEY = previousKey; }
+});

@@ -27,7 +27,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   if (!subId || !view) return NextResponse.json(EXPIRED, { status: 404 });
   if (view.state !== 'open' && view.state !== 'question') return NextResponse.json(publicView(view));
 
-  const form = await request.formData();
+  const form = await request.formData() as unknown as FormData;
   const file = form.get('file');
   const text = String(form.get('text') ?? '').trim().slice(0, 500);
   const sampleId = view.samples?.some((s) => s.id === form.get('sampleId')) ? String(form.get('sampleId')) : undefined;

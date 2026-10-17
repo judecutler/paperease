@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { notifyAdoptedWorkers } from "./notifications";
 import { z } from "zod";
 import { readDoc, writeDoc, mutate, saveImmutable } from "./store";
 import { agencyKey, CORPUS } from "./service";
 import { initialCorpus } from "./jurisdictions";
-import { emptyAgency, type Context, type Corpus } from "./types";
+import { emptyAgency, type Context } from "./types";
 import { applicable } from "./engine";
 import { HttpError } from "./auth";
 import { run, type Action } from "../agent";
@@ -54,7 +55,6 @@ export async function syncCollection(ctx: Context) {
       const rule = corpus.candidates.find((r) => r.id === id);
       if (
         !rule ||
-        rule.subject !== "worker" ||
         !["document", "training", "renewal"].includes(rule.action)
       )
         continue;
@@ -64,6 +64,8 @@ export async function syncCollection(ctx: Context) {
           name: rule.title,
           rule: `${rule.citation}: ${rule.obligation}`,
           ruleVersionId: rule.id,
+          subject: rule.subject,
+          contractConfirmed: false,
           smsCollectible: false,
           validMonths: null,
           ask: "evidence for the reviewed obligation",
@@ -83,14 +85,19 @@ export async function syncCollection(ctx: Context) {
             },
           ],
         });
-      for (const w of a.workers) {
-        const match = applicable(rule, a.profile, w);
+      notifyAdoptedWorkers(a, rule, corpus);
+      const definition = db.rules.requirements.find((r) => r.id === id)!;
+      if (a.evidenceContracts?.[id]) Object.assign(definition, a.evidenceContracts[id]);
+      const targets = rule.subject === "agency" ? [{ id: "agency", name: a.profile.name }] : a.workers;
+      for (const w of targets) {
+        const match = applicable(rule, a.profile, rule.subject === "worker" ? a.workers.find((x) => x.id === w.id) : undefined);
         const prior = db.requirements.find(
           (s) => s.caregiverId === w.id && s.requirementId === id,
         );
         if (match.result === "applicable" && !prior)
           db.requirements.push({
             caregiverId: w.id,
+            subject: rule.subject,
             requirementId: id,
             status: "missing",
             explanation: `Evidence required under ${rule.citation}. Human review must check the full obligation and any renewal interval.`,
@@ -104,6 +111,26 @@ export async function syncCollection(ctx: Context) {
           prior.explanation = `Assignment/date changed: ${match.reasons.join(" ")} Historical evidence retained; reassess applicability.`;
         }
       }
+    }
+    for (const item of db.requirements) {
+      const rule = corpus.candidates.find((r) => r.id === item.requirementId);
+      item.inactive = !rule || !a.adopted.includes(rule.id) || a.adopted.some((id) => {
+        let next = corpus.candidates.find((r) => r.id === id);
+        const seen = new Set<string>();
+        while (next?.previousId && !seen.has(next.id)) {
+          seen.add(next.id);
+          if (next.previousId === rule?.id) return true;
+          next = corpus.candidates.find((r) => r.id === next!.previousId);
+        }
+        return false;
+      }) || applicable(rule, a.profile, a.workers.find((w) => w.id === item.caregiverId)).result !== "applicable";
+      if (item.expiresOn && item.expiresOn <= new Date().toISOString().slice(0, 10)) {
+        item.status = "expiring";
+        const action = a.actions.find((x) => x.ruleId === item.requirementId && (x.workerId || "agency") === item.caregiverId);
+        if (action) action.status = "open";
+      }
+      if (item.inactive) item.reevaluationRequired = true;
+      if (rule?.previousId && !item.approvedSubmissionId) item.reevaluationRequired = true;
     }
   });
   return (await readDoc(agencyKey(ctx.agencyId), emptyAgency)).data.collection!;
@@ -129,76 +156,9 @@ export async function collectionAction(ctx: Context, input: unknown) {
     .passthrough()
     .parse(input);
   if (head.type === "evidence-submit") {
-    const v = z
-      .object({
-        caregiverId: z.string(),
-        requirementId: z.string(),
-        notes: z.string().min(10).max(4000),
-        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        fileId: z.string().uuid(),
-      })
-      .parse(head);
-    const file = (
-      await readDoc<{ name: string; mime: string } | null>(
-        `file:${ctx.agencyId}:${v.fileId}`,
-        () => null,
-      )
-    ).data;
-    if (!file)
-      throw new HttpError(404, "Evidence file not found in this workspace.");
-    const cg = db.caregivers.find((c) => c.id === v.caregiverId);
-    const req = db.rules.requirements.find((r) => r.id === v.requirementId);
-    const state = db.requirements.find(
-      (s) =>
-        s.caregiverId === v.caregiverId && s.requirementId === v.requirementId,
-    );
-    if (!cg || !req || !state)
-      throw new HttpError(404, "Checklist item not found.");
-    const id = randomUUID();
-    db.submissions.push({
-      id,
-      caregiverId: cg.id,
-      requirementId: req.id,
-      files: [
-        {
-          name: file.name,
-          mime: file.mime,
-          url: `/api/regulatory/files/${v.fileId}`,
-        },
-      ],
-      fields: [
-        {
-          key: "name",
-          label: "Worker name",
-          value: cg.name,
-          source: "caregiver",
-          required: true,
-        },
-        {
-          key: "completion_date",
-          label: "Evidence date",
-          value: v.date,
-          source: "caregiver",
-          required: true,
-        },
-        {
-          key: "evidence_notes",
-          label: "How evidence meets the cited obligation",
-          value: v.notes,
-          source: "caregiver",
-          required: true,
-        },
-      ],
-      extractedBy: "none",
-      createdAt: new Date().toISOString(),
-      state: "ready",
-      followUps: 0,
-      supersedes: state.openSubmissionId || state.approvedSubmissionId,
-    });
-    state.openSubmissionId = id;
-    state.status = "pending-review";
-    state.explanation =
-      "Staff-submitted evidence. Verify every field and the full legal obligation before approval.";
+    const { submitStoredEvidence } = await import("./compliance");
+    await submitStoredEvidence(ctx, head);
+    return payload(await syncCollection(ctx));
   } else {
     if ("submissionId" in head) {
       const target = db.submissions.find((s) => s.id === head.submissionId);
@@ -244,19 +204,9 @@ export async function collectionAction(ctx: Context, input: unknown) {
                   .parse(head)
               : { type: "run-gap-check" as const };
     if (v.type === "approve") {
-      const sub = db.submissions.find((s) => s.id === v.submissionId);
-      if (!sub) throw new HttpError(404, "Submission not found.");
-      const corpus = (await readDoc(CORPUS, initialCorpus)).data;
-      const rule = corpus.candidates.find((r) => r.id === sub.requirementId);
-      const worker = doc.data.workers.find((w) => w.id === sub.caregiverId);
-      if (
-        !rule ||
-        applicable(rule, doc.data.profile, worker).result !== "applicable"
-      )
-        throw new HttpError(
-          409,
-          "Reassess applicability before approving evidence.",
-        );
+      const { reviewEvidence } = await import("./compliance");
+      await reviewEvidence(ctx, { type: "approve", submissionId: v.submissionId, attest: false });
+      return payload(await syncCollection(ctx));
     }
     await run(v as Action, { db });
   }

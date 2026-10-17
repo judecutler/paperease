@@ -52,7 +52,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
           <div className="eyebrow"><Link href="/">Dashboard</Link> / Caregiver</div>
           <h1>{cg.name}</h1>
           <p className="muted small" style={{ marginTop: 4 }}>
-            <span className="cl-data">{cg.phone}</span> · SMS in {cg.language === 'es' ? 'Spanish' : 'English'} · hired {dateLabel(cg.hiredOn)} ·{' '}
+            <span className="cl-data">{cg.phone}</span> · SMS in English · hired {dateLabel(cg.hiredOn)} ·{' '}
             {cg.optedOut ? 'opted out of texts' : cg.smsConsent ? 'agreed to texts' : 'no SMS consent'}
           </p>
         </div>

@@ -187,6 +187,7 @@ export interface Notice {
   read: boolean;
 }
 export interface AgencyState {
+  evidenceContracts?: Record<string, import("../types").RequirementType>;
   collection?: Db;
   profile: Profile;
   workers: Worker[];

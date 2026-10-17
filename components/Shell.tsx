@@ -10,7 +10,7 @@ const NAV = [
   ["/", "Dashboard"],
   ["/audit", "Audit trail"],
   ["/rules", "Rules"],
-  ["/regulatory", "Regulatory watch"],
+  ["/regulatory", "Company"],
 ] as const;
 
 const signOut = async () => {
@@ -95,7 +95,7 @@ export function Shell({
           </nav>
           {unread > 0 && (
             <a
-              href="/regulatory?tab=notifications"
+              href="/regulatory/watch?tab=notifications"
               className="reg-shell-alert"
               aria-label={`${unread} unread regulation alerts`}
             >
