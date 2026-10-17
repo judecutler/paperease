@@ -265,8 +265,8 @@ async function authorize(c: Ctx, caregiverId: string, requirementId: string) {
 }
 
 export async function run(action: Action): Promise<Db> {
-  if (action.type === 'reset') return reset();
-  const db = load();
+  if (action.type === 'reset') return await reset();
+  const db = await load();
   const c = new Ctx(db);
   switch (action.type) {
     case 'run-gap-check': {
@@ -382,6 +382,6 @@ export async function run(action: Action): Promise<Db> {
       break;
     }
   }
-  save(db);
+  await save(db);
   return db;
 }

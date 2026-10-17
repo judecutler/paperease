@@ -1,7 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { NextResponse } from 'next/server';
-import { UPLOAD_DIR, newId } from '@/lib/db';
+import { newId, writeUpload } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +14,10 @@ export async function POST(request: Request) {
   if (!ext) return NextResponse.json({ error: 'Send a photo (PNG, JPG, WebP, GIF) or a PDF.' }, { status: 400 });
   if (file.size > MAX_BYTES) return NextResponse.json({ error: 'File is over 5 MB.' }, { status: 400 });
   const stored = `${newId('up')}${ext}`;
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  fs.writeFileSync(path.join(UPLOAD_DIR, stored), Buffer.from(await file.arrayBuffer()));
+  try {
+    await writeUpload(stored, Buffer.from(await file.arrayBuffer()), file.type);
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+  }
   return NextResponse.json({ name: file.name, url: `/api/files/${stored}`, mime: file.type });
 }

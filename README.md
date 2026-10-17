@@ -11,6 +11,18 @@ npm run dev        # http://localhost:3000
 
 Data is stored in `data/db.json` and seeded with 6 sample caregivers on first run. To reset, use **Reset demo data** on the Rules screen or run `npm run reset`.
 
+### Supabase
+
+Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in `.env.local` and the app reads and writes Supabase instead of `data/db.json`, and stores uploaded photos in the private `uploads` Storage bucket instead of `data/uploads`. The key stays on the server: every table has RLS on with no policies, and files are served through `/api/files`.
+
+```bash
+npx supabase link --project-ref <ref>
+npx supabase db push      # tables from supabase/migrations
+npm run db:seed           # copies data/db.json (or the seed data) into Supabase
+```
+
+With Supabase on, **Reset demo data** resets the Supabase tables; `npm run reset` only deletes the local JSON file.
+
 ## Demo scenario (PRD section 7, Maria)
 
 1. On the dashboard, Maria Lopez's Entry training is **Missing**. Click the row to open the detail view.
@@ -45,7 +57,8 @@ SMS is simulated. To hook up Twilio, send from the single `Ctx.sms()` in `lib/ag
 - `lib/agent.ts`: agent workflow and all actions (gap detection, requests, reply handling, verification, approval, rejection, rule changes)
 - `lib/llm.ts`: Claude / RunAnywhere calls and fallbacks
 - `lib/seed.ts`: California HCO checklist (for demo use; verify against official requirements) and sample data
-- `lib/db.ts`: JSON store. Swap only `load()`/`save()` to move to Supabase (`supabase/schema.sql`)
+- `lib/db.ts`: `load()`/`save()` for the whole store and `writeUpload()`/`readUpload()` for photos, backed by Supabase when configured (`supabase/migrations`) or local files
+- `scripts/seed-supabase.ts`: copies the JSON store into Supabase and checks the round trip
 - `components/ui.tsx`: TSX port of the design system reference components
 - `app/tokens.css`, `app/components.css`: tokens and component CSS copied from `/design-system`
 - `scripts/make-samples.mjs`: generates sample document images (Playwright)

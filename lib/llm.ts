@@ -5,7 +5,7 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import type { AiStatus, Caregiver, RequirementType } from './types';
 import { findSample } from './samples';
-import { UPLOAD_DIR } from './db';
+import { readUpload } from './db';
 
 // Every AI call sits behind an env key and falls back to deterministic behavior,
 // so the demo runs end to end with no keys at all.
@@ -174,22 +174,23 @@ const ExtractionSchema = z.object({
   note: z.string().nullable().describe('one short sentence about anything unclear or conflicting'),
 });
 
-function readImage(url: string): { data: string; mime: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' } | null {
-  const file = url.startsWith('/samples/')
-    ? path.join(process.cwd(), 'public', url)
-    : url.startsWith('/api/files/')
-      ? path.join(UPLOAD_DIR, path.basename(url))
-      : null;
-  if (!file || !fs.existsSync(file)) return null;
-  const ext = path.extname(file).toLowerCase();
+async function readImage(url: string): Promise<{ data: string; mime: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' } | null> {
+  const ext = path.extname(url).toLowerCase();
   const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : null;
   if (!mime) return null;
-  return { data: fs.readFileSync(file).toString('base64'), mime };
+  let bytes: Buffer | null = null;
+  if (url.startsWith('/samples/')) {
+    const file = path.join(process.cwd(), 'public', url);
+    bytes = fs.existsSync(file) ? fs.readFileSync(file) : null;
+  } else if (url.startsWith('/api/files/')) {
+    bytes = await readUpload(path.basename(url));
+  }
+  return bytes ? { data: bytes.toString('base64'), mime } : null;
 }
 
 export async function extractDocument(req: RequirementType, fileUrl: string, sampleId?: string): Promise<Extraction> {
   const api = claude();
-  const image = api ? readImage(fileUrl) : null;
+  const image = api ? await readImage(fileUrl) : null;
   if (api && image) {
     try {
       const res = await api.messages.parse({
