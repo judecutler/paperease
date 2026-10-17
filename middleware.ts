@@ -3,8 +3,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { adminFromUser } from '@/lib/adminRole';
 
 // Every page and API route needs a signed-in admin, except the caregiver's upload link,
-// the cron endpoint (it checks CRON_SECRET itself) and the sign-in flow.
-const PUBLIC = [/^\/u\//, /^\/api\/link\//, /^\/api\/cron$/, /^\/api\/auth\//];
+// the cron endpoint (it checks CRON_SECRET itself), the sign-in flow, and regulatory watch,
+// which has its own sign-in, worker accounts and scheduler secret (lib/regulatory/auth.ts).
+const PUBLIC = [/^\/u\//, /^\/api\/link\//, /^\/api\/cron$/, /^\/api\/auth\//, /^\/regulatory(\/|$)/, /^\/api\/regulatory\//];
 
 export async function middleware(request: NextRequest) {
   const url = process.env.SUPABASE_URL;
