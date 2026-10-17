@@ -8,7 +8,7 @@ import type { AuditEvent, Caregiver, Db, RequirementState, RequirementType, SmsM
 // SUPABASE_SECRET_KEY set they live in Supabase (tables and the uploads bucket in supabase/migrations);
 // otherwise in a local JSON file and folder for the demo.
 
-const DATA_DIR = process.env.CARELOOP_DATA_DIR || (process.env.VERCEL ? '/tmp/careloop' : path.join(process.cwd(), 'data'));
+const DATA_DIR = process.env.PAPEREASE_DATA_DIR || (process.env.VERCEL ? '/tmp/paperease' : path.join(process.cwd(), 'data'));
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const BUCKET = 'uploads';
@@ -205,6 +205,7 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
       from: m.sender,
       text: opt(m.body),
       attachment: opt(m.attachment),
+      photoCheck: opt(m.photo_check),
       time: iso(m.sent_at),
     })),
     audit: audit.map((e): AuditEvent => ({
@@ -290,6 +291,7 @@ async function saveSupabase(sb: SupabaseClient, db: Db) {
       sender: m.from,
       body: m.text ?? null,
       attachment: m.attachment ?? null,
+      photo_check: m.photoCheck ?? null,
       sent_at: m.time,
     }))),
     upsert('audit_events', db.audit.map((e) => ({

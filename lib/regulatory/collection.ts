@@ -258,7 +258,7 @@ export async function collectionAction(ctx: Context, input: unknown) {
           "Reassess applicability before approving evidence.",
         );
     }
-    await run(v as Action, db);
+    await run(v as Action, { db });
   }
   doc.data.audit.push({
     at: new Date().toISOString(),

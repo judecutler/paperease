@@ -130,7 +130,7 @@ export function notifyAdoptedWorkers(
   if (count)
     a.audit.push({
       at: timestamp(),
-      actor: "CareLoop agent",
+      actor: "PaperEase agent",
       action: `Published ${count} in-app worker notification(s) for reviewed rule ${rule.id}. No SMS or email sent.`,
     });
   return count;

@@ -1,11 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { normalizePhone } from './phone';
+import { signInRequired } from './signin';
 
 // Real text messages through Twilio, using plain fetch (no SDK). Everything is off until configured:
 //
 //   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM (E.164 number) or TWILIO_MESSAGING_SERVICE_SID
 //   SMS_LIVE=true                       explicit switch, so keys in a dev .env never text real people
-//   CARELOOP_AUTH=required              live texting is refused on an open workspace
+//   admin sign-in on                    (SUPABASE_URL + SUPABASE_PUBLISHABLE_KEY) live texting is refused on an open workspace
 //   PUBLIC_BASE_URL=https://your.app    used to verify Twilio's webhook signature
 //
 // Anything else runs in "simulated" mode: messages appear in the in-app thread and nothing leaves the server.
@@ -16,7 +17,7 @@ export function smsStatus(env = process.env): SmsStatus {
   const sid = env.TWILIO_ACCOUNT_SID, token = env.TWILIO_AUTH_TOKEN;
   if (!sid || !token || !(env.TWILIO_FROM || env.TWILIO_MESSAGING_SERVICE_SID)) return { mode: 'simulated', reason: 'Twilio is not configured.' };
   if (env.SMS_LIVE !== 'true') return { mode: 'simulated', reason: 'Set SMS_LIVE=true to send real texts.' };
-  if (env.CARELOOP_AUTH !== 'required') return { mode: 'simulated', reason: 'Real texts need CARELOOP_AUTH=required so only signed-in staff can trigger them.' };
+  if (!signInRequired(env)) return { mode: 'simulated', reason: 'Real texts need admin sign-in (SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY) so only signed-in staff can trigger them.' };
   return { mode: 'live' };
 }
 

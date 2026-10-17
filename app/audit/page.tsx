@@ -3,13 +3,13 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Shell } from '@/components/Shell';
 import { AuditTrail } from '@/components/ui';
-import { timeLabel, useCareLoop } from '@/components/useCareLoop';
+import { timeLabel, usePaperEase } from '@/components/usePaperEase';
 import type { Actor } from '@/lib/types';
 
 const FILTERS: [Actor | 'all', string][] = [['all', 'All'], ['agent', 'Agent'], ['admin', 'Admin'], ['caregiver', 'Caregivers'], ['system', 'System']];
 
 export default function AuditPage() {
-  const { data, error, setError } = useCareLoop();
+  const { data, error, setError } = usePaperEase();
   const [filter, setFilter] = useState<Actor | 'all'>('all');
   if (!data) return <Shell error={error}><p className="loading">Loading…</p></Shell>;
   const { db } = data;
@@ -32,7 +32,7 @@ export default function AuditPage() {
     })
     .reverse();
   return (
-    <Shell ai={data.ai} error={error} onDismiss={() => setError(null)}>
+    <Shell ai={data.ai} me={data.me} error={error} onDismiss={() => setError(null)}>
       <div className="page-head">
         <div>
           <div className="eyebrow">{db.agency.name}</div>

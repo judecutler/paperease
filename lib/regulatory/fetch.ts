@@ -75,7 +75,7 @@ export async function fetchOfficial(
       u,
       {
         headers: {
-          "user-agent": "CareLoop-RegulatoryWatch/1.0",
+          "user-agent": "PaperEase-RegulatoryWatch/1.0",
           accept: "text/html,application/pdf,text/plain",
           "accept-encoding": "identity",
           ...headers,

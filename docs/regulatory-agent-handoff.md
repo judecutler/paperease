@@ -127,7 +127,7 @@ West Virginia correction identified during this audit: the configured wvrn.gov h
 
 npm run regulatory:worker periodically queues enabled due sources. Discovery pages are captured and their relevant links exposed for source registration/review. Legal documents must be registered and enabled as law/regulation sources before AI extracts obligations. New candidates are not automatically approved or adopted. A new source version does not silently replace a prior agency decision. The live worker is not currently evidenced as running: the inspected corpus contains zero jobs and no persisted snapshots.
 
-The running presentation uses REGULATORY_LOCAL_DEMO=true and REGULATORY_DATA_DIR=/tmp/careloop-browser-qa. It stores encoded-ID JSON files there, for example reg%3Acorpus.json. The default local directory is data/regulatory, or data/regulatory-demo when using npm run demo. Its simulated policy candidates are isolated from Supabase and must not be consumed as legal rules.
+The running presentation uses REGULATORY_LOCAL_DEMO=true and REGULATORY_DATA_DIR=/tmp/paperease-browser-qa. It stores encoded-ID JSON files there, for example reg%3Acorpus.json. The default local directory is data/regulatory, or data/regulatory-demo when using npm run demo. Its simulated policy candidates are isolated from Supabase and must not be consumed as legal rules.
 
 ## Authoritative references checked in this audit
 

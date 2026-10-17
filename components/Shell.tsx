@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type React from "react";
 import { useEffect, useState } from "react";
+import type { Admin } from "@/lib/adminRole";
 import type { AiStatus } from "@/lib/types";
 
 const NAV = [
@@ -13,13 +14,20 @@ const NAV = [
   ["/regulatory", "Regulatory watch"],
 ] as const;
 
+const signOut = async () => {
+  await fetch("/api/auth/logout", { method: "POST" });
+  window.location.assign("/login");
+};
+
 export function Shell({
   ai,
+  me,
   children,
   error,
   onDismiss,
 }: {
   ai?: AiStatus;
+  me?: Admin | null;
   children: React.ReactNode;
   error?: string | null;
   onDismiss?: () => void;
@@ -65,7 +73,7 @@ export function Shell({
                 <path d="M17.5 3.5v4.25h-4.25" />
               </svg>
             </span>
-            CareLoop
+            PaperEase
           </Link>
           <nav className="nav">
             {NAV.map(([href, label]) => (
@@ -109,6 +117,12 @@ export function Shell({
               {ai.followUps === "runanywhere"
                 ? " · RunAnywhere follow-ups"
                 : ""}
+            </span>
+          )}
+          {me && (
+            <span className="me" title={me.email}>
+              {me.name}
+              <button className="cl-btn cl-btn-quiet cl-btn-sm" onClick={signOut}>Sign out</button>
             </span>
           )}
         </div>

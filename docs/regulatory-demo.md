@@ -18,7 +18,7 @@ Open http://127.0.0.1:3000/regulatory and click **Reset guided demo**. No accoun
 5. Open **Checklist**, expand **Submit new evidence**, and upload `public/samples/training-transcript-maria.png`. Choose an evidence date and explain how it meets the simulated obligation.
 6. Submit, verify all three fields against the original, and **Approve evidence**. Document approval and action completion remain distinct.
 7. A prominent alert banner appears as soon as the simulated change is detected. Open **Notifications** to see persistent staff alerts and mark them as read.
-8. After adoption, the CareLoop agent publishes one targeted in-app message for Maria. The agency can preview it in **Notifications**. Click **Open worker inbox** to show the worker-facing page with the requirement, assignment-specific reason, next action, citation and dates.
+8. After adoption, the PaperEase agent publishes one targeted in-app message for Maria. The agency can preview it in **Notifications**. Click **Open worker inbox** to show the worker-facing page with the requirement, assignment-specific reason, next action, citation and dates.
 9. In the worker inbox, click **I have read this update**. The agency preview then shows **Acknowledged**. Reading a message does not approve evidence or establish compliance.
 10. Open **Operations** for the audit log; **Coverage** shows all 50 states plus DC and federal sources.
 
@@ -26,7 +26,7 @@ Use **Reset guided demo** to repeat the presentation. The original dashboard and
 
 ## Live integration
 
-Run `npm run dev` without local-demo mode to use Supabase. The additive migration `supabase/migrations/202610170001_regulatory.sql` has been applied to the configured project. Do not run the old `supabase/schema.sql` over the team's existing database.
+Run `npm run dev` without local-demo mode to use Supabase. The additive migration `supabase/migrations/20261017000007_regulatory.sql` has been applied to the configured project. Do not run the old `supabase/schema.sql` over the team's existing database.
 
 Sign in with an application user from **Supabase Authentication**, not the Supabase dashboard account. The first sign-in can create that user's private regulatory workspace. An administrator can add teammates to the same agency through `reg_memberships`; never share the project's secret key in the browser.
 
@@ -71,18 +71,18 @@ All states are represented, but initial discovery pages do not constitute a comp
 
 `npm test`, `npm run typecheck`, `npm run build`; `npm run regulatory:live-test` creates two confirmed technical Auth users, checks authenticated API isolation, and deletes the users, memberships and technical agency records. No email is sent by this script.
 
-Stop the worker to pause new monitoring. Revert the feature branch/UI to remove access; retain the additive regulatory tables and snapshots until their data is intentionally retired. Existing CareLoop tables are not changed by the migration. `.env.local` stays untracked and is excluded from Docker builds.
+Stop the worker to pause new monitoring. Revert the feature branch/UI to remove access; retain the additive regulatory tables and snapshots until their data is intentionally retired. Existing PaperEase tables are not changed by the migration. `.env.local` stays untracked and is excluded from Docker builds.
 
 
 ## Worker accounts and alerts
 
-The additive migration `202610170002_worker_inbox.sql` creates `reg_worker_memberships`. A trusted administrator maps a Supabase Auth user ID to one agency UUID and worker profile ID. The worker endpoint ignores user-supplied worker IDs in hosted mode and uses that mapping. Demo mode permits selecting the fictional worker for presentation.
+The additive migration `20261017000008_worker_inbox.sql` creates `reg_worker_memberships`. A trusted administrator maps a Supabase Auth user ID to one agency UUID and worker profile ID. The worker endpoint ignores user-supplied worker IDs in hosted mode and uses that mapping. Demo mode permits selecting the fictional worker for presentation.
 
 - `GET /api/regulatory/alerts`: authenticated agency unread alert count.
 - `GET /api/regulatory/worker-inbox`: current worker's messages only.
 - `POST /api/regulatory/worker-acknowledge`: records acknowledgment of that worker's own message.
 - `/regulatory/worker`: worker sign-in/inbox, separate from the agency dashboard.
 
-Messages are persisted under `workerNotices[]` and staff alerts under `notices[]` in `reg:agency:<UUID>`. Notification text is deterministically composed by the CareLoop agent from the exact reviewed obligation and the worker's assignment; no additional model call is needed to invent or paraphrase legal requirements. No SMS or email delivery is configured. Acknowledgment is logged separately from task completion and document approval.
+Messages are persisted under `workerNotices[]` and staff alerts under `notices[]` in `reg:agency:<UUID>`. Notification text is deterministically composed by the PaperEase agent from the exact reviewed obligation and the worker's assignment; no additional model call is needed to invent or paraphrase legal requirements. No SMS or email delivery is configured. Acknowledgment is logged separately from task completion and document approval.
 
 The worker fans out detected-change alerts to agency records; visible agency/worker pages poll every ten seconds. Worker instructions are created transactionally upon approval plus adoption, not merely after an unreviewed extraction. Notifications are idempotent per rule version and worker.

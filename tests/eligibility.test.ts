@@ -74,8 +74,8 @@ describe('/api/v1 routes', () => {
   let batch: typeof import('../app/api/v1/eligibility/batch/route');
   let list: typeof import('../app/api/v1/caregivers/route');
   before(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'careloop-api-'));
-    process.env.CARELOOP_DATA_DIR = dir;
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'paperease-api-'));
+    process.env.PAPEREASE_DATA_DIR = dir;
     for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY']) delete process.env[k];
     process.env.ELIGIBILITY_API_KEYS = `sched:${SECRET}`;
     single = await import('../app/api/v1/eligibility/route');

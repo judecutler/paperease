@@ -1,7 +1,7 @@
 # Compliance gate API
 
-Scheduling software asks CareLoop one question before it assigns a shift: **is this caregiver allowed to work it?**
-CareLoop answers from what a person has approved. It never guesses: anything it cannot confirm is a "no".
+Scheduling software asks PaperEase one question before it assigns a shift: **is this caregiver allowed to work it?**
+PaperEase answers from what a person has approved. It never guesses: anything it cannot confirm is a "no".
 
 ## Turn it on
 
@@ -45,7 +45,7 @@ as `expires-during-shift`.
 `POST /api/v1/eligibility/batch` with `{ "shifts": [ {…same fields…}, … ], "strict": false }` (up to 200). Returns `{ "results": [...] }` in order.
 A row that cannot be evaluated comes back `unknown` with an `error`; it never blocks the other rows.
 
-## Map your workers to CareLoop ids
+## Map your workers to PaperEase ids
 
 `GET /api/v1/caregivers` returns `{ "caregivers": [{ "id", "name" }] }`.
 

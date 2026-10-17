@@ -29,7 +29,7 @@ before(async () => {
     alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
     alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
   `);
-  for (const f of ['20261017000000_init.sql', '20261017000001_caregiver_position.sql', '20261017000002_insert_order.sql', '20261017000004_sweep_rules.sql', '20261017000005_registry_check.sql', '202610170001_regulatory.sql', '20261018000001_core_auth_rls.sql', '20261018000002_app_docs.sql', '20261018000003_languages.sql']) {
+  for (const f of ['20261017000000_init.sql', '20261017000001_caregiver_position.sql', '20261017000002_insert_order.sql', '20261017000004_sweep_rules.sql', '20261017000005_registry_check.sql', '20261017000006_photo_checks.sql', '20261017000007_regulatory.sql', '20261018000001_core_auth_rls.sql', '20261018000002_app_docs.sql', '20261018000003_languages.sql']) {
     try { await pg.exec(fs.readFileSync(path.join(MIG, f), 'utf8')); } catch (e) { throw new Error(`${f}: ${(e as Error).message}`); }
   }
   await pg.exec(`

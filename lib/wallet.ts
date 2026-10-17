@@ -180,8 +180,8 @@ export function walletSms(kind: WalletSms, cg: Pick<Caregiver, 'firstName' | 'la
   const pack = packFor(cg.language);
   if (pack) return pack.wallet[kind]({ f, agency });
   switch (kind) {
-    case 'share-ask': return `Hi ${f}! ${agency} can save your verified records to your CareLoop wallet so other agencies you work for don't ask for them again. It's your call. Reply YES to allow, or ignore this.`;
-    case 'import-ask': return `Hi ${f}! ${agency} found verified records in your CareLoop wallet from another agency. Reply YES to let ${agency} use them (no need to resend photos), or NO.`;
+    case 'share-ask': return `Hi ${f}! ${agency} can save your verified records to your PaperEase wallet so other agencies you work for don't ask for them again. It's your call. Reply YES to allow, or ignore this.`;
+    case 'import-ask': return `Hi ${f}! ${agency} found verified records in your PaperEase wallet from another agency. Reply YES to let ${agency} use them (no need to resend photos), or NO.`;
     case 'share-ok': return `Done, ${f}! Your verified records are saved. Ask ${agency} any time to remove them.`;
     case 'import-ok': return `Thanks, ${f}! ${agency} will use those records and the office will confirm them.`;
     case 'declined': return `No problem, ${f}. Nothing will be shared.`;

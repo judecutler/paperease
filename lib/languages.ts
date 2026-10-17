@@ -16,6 +16,8 @@ interface W { f: string; agency: string }
 export interface Pack {
   label: string;
   reviewed: boolean;
+  /** lead-in for the secure upload link appended to requests */
+  uploadHere: string;
   /** what the agent asks for, per requirement id */
   ask: Record<string, string>;
   /** a missing field, as it appears inside a sentence */
@@ -33,7 +35,7 @@ export const LANG_CODES = Object.keys(LANG_LABELS) as LangCode[];
 export const isLangCode = (x: unknown): x is LangCode => typeof x === 'string' && x in LANG_LABELS;
 
 const es: Pack = {
-  label: 'Spanish', reviewed: true,
+  label: 'Spanish', reviewed: true, uploadHere: 'O súbelo aquí',
   ask: {
     hca_registration: 'una foto de tu registro de Home Care Aide',
     tb_test: 'una foto de tu resultado más reciente de la prueba de TB',
@@ -53,13 +55,14 @@ const es: Pack = {
     'wrong-doc': ({ first, ask }) => `¡Gracias, ${first}! Esto parece ser otro documento. Necesitamos ${ask}. ¿Puedes enviarlo?`,
     reminder: ({ first, ask }) => `Hola ${first}, un recordatorio: tu agencia todavía necesita ${ask}. Responde con una foto cuando puedas.`,
     'request-another': ({ first, ask }) => `Hola ${first}, la oficina no pudo usar la imagen anterior. ¿Puedes enviar otra vez ${ask}, con una foto clara?`,
-    'opted-out': () => 'Ya no recibirás mensajes de CareLoop. Tu agencia te contactará directamente.',
+    'opted-out': () => 'Ya no recibirás mensajes de PaperEase. Tu agencia te contactará directamente.',
     approved: ({ first }) => `¡Gracias, ${first}! Tu documento fue aprobado. No necesitas hacer nada más.`,
     'passed-on': ({ first }) => `¡Gracias, ${first}! Se lo paso a la oficina.`,
+    'select-request': () => 'Selecciona una solicitud de documento abierta o contacta a la oficina.',
   },
   wallet: {
-    'share-ask': ({ f, agency }) => `¡Hola ${f}! ${agency} puede guardar tus registros verificados en tu cartera CareLoop para que otras agencias donde trabajes no te los pidan otra vez. Tú decides. Responde SI para permitirlo, o ignora este mensaje.`,
-    'import-ask': ({ f, agency }) => `¡Hola ${f}! ${agency} encontró registros verificados en tu cartera CareLoop de otra agencia. Responde SI para que ${agency} los use (no tendrás que enviar fotos otra vez), o NO.`,
+    'share-ask': ({ f, agency }) => `¡Hola ${f}! ${agency} puede guardar tus registros verificados en tu cartera PaperEase para que otras agencias donde trabajes no te los pidan otra vez. Tú decides. Responde SI para permitirlo, o ignora este mensaje.`,
+    'import-ask': ({ f, agency }) => `¡Hola ${f}! ${agency} encontró registros verificados en tu cartera PaperEase de otra agencia. Responde SI para que ${agency} los use (no tendrás que enviar fotos otra vez), o NO.`,
     'share-ok': ({ f, agency }) => `¡Listo, ${f}! Guardamos tus registros verificados. Puedes pedirle a ${agency} que los quite cuando quieras.`,
     'import-ok': ({ f, agency }) => `¡Gracias, ${f}! ${agency} usará esos registros y la oficina los confirmará.`,
     declined: ({ f }) => `De acuerdo, ${f}. No se compartirá nada.`,
@@ -68,7 +71,7 @@ const es: Pack = {
 };
 
 const tl: Pack = {
-  label: 'Tagalog', reviewed: false,
+  label: 'Tagalog', reviewed: false, uploadHere: 'O i-upload dito',
   ask: {
     hca_registration: 'larawan ng iyong Home Care Aide registration',
     tb_test: 'larawan ng pinakabagong resulta ng iyong TB test',
@@ -88,13 +91,14 @@ const tl: Pack = {
     'wrong-doc': ({ first, ask }) => `Salamat, ${first}! Mukhang ibang dokumento ito. Kailangan namin ang ${ask}. Maaari mo bang ipadala iyon?`,
     reminder: ({ first, ask }) => `Kumusta ${first}, paalala lang: kailangan pa rin ng iyong ahensya ang ${ask}. Sumagot ng larawan kapag may pagkakataon ka.`,
     'request-another': ({ first, ask }) => `Kumusta ${first}, hindi magamit ng opisina ang huling larawan. Maaari mo bang ipadala muli ang ${ask} bilang malinaw na larawan?`,
-    'opted-out': () => 'Hindi ka na makakatanggap ng mga text mula sa CareLoop. Direktang makikipag-ugnayan sa iyo ang iyong ahensya.',
+    'opted-out': () => 'Hindi ka na makakatanggap ng mga text mula sa PaperEase. Direktang makikipag-ugnayan sa iyo ang iyong ahensya.',
     approved: ({ first }) => `Salamat, ${first}! Naaprubahan na ang iyong dokumento. Wala nang kailangang gawin.`,
     'passed-on': ({ first }) => `Salamat, ${first}! Ipapasa ko ito sa opisina.`,
+    'select-request': () => 'Pumili ng bukas na hiling para sa dokumento o makipag-ugnayan sa opisina.',
   },
   wallet: {
-    'share-ask': ({ f, agency }) => `Kumusta ${f}! Maaaring i-save ng ${agency} ang iyong na-verify na mga record sa iyong CareLoop wallet para hindi na ito hingin ng ibang ahensya. Ikaw ang magpapasya. Sumagot ng OO para payagan, o huwag pansinin ito.`,
-    'import-ask': ({ f, agency }) => `Kumusta ${f}! May nakita ang ${agency} na na-verify na mga record sa iyong CareLoop wallet mula sa ibang ahensya. Sumagot ng OO para magamit ito ng ${agency} (hindi mo na kailangang magpadala ng larawan), o HINDI.`,
+    'share-ask': ({ f, agency }) => `Kumusta ${f}! Maaaring i-save ng ${agency} ang iyong na-verify na mga record sa iyong PaperEase wallet para hindi na ito hingin ng ibang ahensya. Ikaw ang magpapasya. Sumagot ng OO para payagan, o huwag pansinin ito.`,
+    'import-ask': ({ f, agency }) => `Kumusta ${f}! May nakita ang ${agency} na na-verify na mga record sa iyong PaperEase wallet mula sa ibang ahensya. Sumagot ng OO para magamit ito ng ${agency} (hindi mo na kailangang magpadala ng larawan), o HINDI.`,
     'share-ok': ({ f, agency }) => `Tapos na, ${f}! Naka-save na ang iyong na-verify na mga record. Maaari mong hilingin sa ${agency} na alisin ang mga ito anumang oras.`,
     'import-ok': ({ f, agency }) => `Salamat, ${f}! Gagamitin ng ${agency} ang mga record na iyon at kukumpirmahin ito ng opisina.`,
     declined: ({ f }) => `Walang problema, ${f}. Walang ibabahagi.`,
@@ -103,7 +107,7 @@ const tl: Pack = {
 };
 
 const vi: Pack = {
-  label: 'Vietnamese', reviewed: false,
+  label: 'Vietnamese', reviewed: false, uploadHere: 'Hoặc tải lên tại đây',
   ask: {
     hca_registration: 'ảnh giấy đăng ký Home Care Aide của bạn',
     tb_test: 'ảnh kết quả xét nghiệm lao (TB) mới nhất của bạn',
@@ -123,13 +127,14 @@ const vi: Pack = {
     'wrong-doc': ({ first, ask }) => `Cảm ơn ${first}! Đây có vẻ là một loại giấy tờ khác. Chúng tôi cần ${ask}. Bạn có thể gửi giúp không?`,
     reminder: ({ first, ask }) => `Xin chào ${first}, nhắc nhẹ: công ty của bạn vẫn cần ${ask}. Hãy trả lời kèm ảnh khi bạn tiện.`,
     'request-another': ({ first, ask }) => `Xin chào ${first}, văn phòng không dùng được ảnh trước. Bạn có thể gửi lại ${ask} bằng một ảnh rõ nét không?`,
-    'opted-out': () => 'Bạn sẽ không nhận tin nhắn CareLoop nữa. Công ty của bạn sẽ liên hệ trực tiếp.',
+    'opted-out': () => 'Bạn sẽ không nhận tin nhắn PaperEase nữa. Công ty của bạn sẽ liên hệ trực tiếp.',
     approved: ({ first }) => `Cảm ơn ${first}! Tài liệu của bạn đã được duyệt. Bạn không cần làm gì thêm.`,
     'passed-on': ({ first }) => `Cảm ơn ${first}! Tôi sẽ chuyển việc này cho văn phòng.`,
+    'select-request': () => 'Vui lòng chọn một yêu cầu tài liệu đang mở hoặc liên hệ văn phòng.',
   },
   wallet: {
-    'share-ask': ({ f, agency }) => `Xin chào ${f}! ${agency} có thể lưu các hồ sơ đã xác minh của bạn vào ví CareLoop để các công ty khác bạn làm việc không hỏi lại. Bạn quyết định. Trả lời CÓ để cho phép, hoặc bỏ qua tin nhắn này.`,
-    'import-ask': ({ f, agency }) => `Xin chào ${f}! ${agency} tìm thấy hồ sơ đã xác minh trong ví CareLoop của bạn từ một công ty khác. Trả lời CÓ để ${agency} sử dụng (bạn không cần gửi lại ảnh), hoặc KHÔNG.`,
+    'share-ask': ({ f, agency }) => `Xin chào ${f}! ${agency} có thể lưu các hồ sơ đã xác minh của bạn vào ví PaperEase để các công ty khác bạn làm việc không hỏi lại. Bạn quyết định. Trả lời CÓ để cho phép, hoặc bỏ qua tin nhắn này.`,
+    'import-ask': ({ f, agency }) => `Xin chào ${f}! ${agency} tìm thấy hồ sơ đã xác minh trong ví PaperEase của bạn từ một công ty khác. Trả lời CÓ để ${agency} sử dụng (bạn không cần gửi lại ảnh), hoặc KHÔNG.`,
     'share-ok': ({ f, agency }) => `Xong rồi, ${f}! Hồ sơ đã xác minh của bạn đã được lưu. Bạn có thể nhờ ${agency} xóa bất cứ lúc nào.`,
     'import-ok': ({ f, agency }) => `Cảm ơn ${f}! ${agency} sẽ dùng các hồ sơ đó và văn phòng sẽ xác nhận.`,
     declined: ({ f }) => `Không sao, ${f}. Sẽ không chia sẻ gì cả.`,
@@ -138,7 +143,7 @@ const vi: Pack = {
 };
 
 const zh: Pack = {
-  label: 'Chinese (Simplified)', reviewed: false,
+  label: 'Chinese (Simplified)', reviewed: false, uploadHere: '或在此上传',
   ask: {
     hca_registration: '您的居家护理员（Home Care Aide）注册证照片',
     tb_test: '您最新的结核病（TB）检测结果照片',
@@ -158,13 +163,14 @@ const zh: Pack = {
     'wrong-doc': ({ first, ask }) => `谢谢，${first}！这看起来是另一种文件。我们需要${ask}。可以请您发送吗？`,
     reminder: ({ first, ask }) => `${first}您好，温馨提醒：您的机构仍需要${ask}。方便时请回复照片。`,
     'request-another': ({ first, ask }) => `${first}您好，办公室无法使用上一张照片。请重新发送${ask}，并确保照片清晰。`,
-    'opted-out': () => '您将不再收到 CareLoop 的短信。您的机构会直接与您联系。',
+    'opted-out': () => '您将不再收到 PaperEase 的短信。您的机构会直接与您联系。',
     approved: ({ first }) => `谢谢，${first}！您的文件已通过审核，无需再做任何事。`,
     'passed-on': ({ first }) => `谢谢，${first}！我会把这件事转给办公室。`,
+    'select-request': () => '请选择一个未完成的文件请求，或联系办公室。',
   },
   wallet: {
-    'share-ask': ({ f, agency }) => `${f}您好！${agency}可以把您已核实的记录保存到 CareLoop 钱包，这样您工作过的其他机构就不必再次索取。由您决定。回复“是”表示同意，或忽略此消息。`,
-    'import-ask': ({ f, agency }) => `${f}您好！${agency}在您的 CareLoop 钱包中发现了另一家机构的已核实记录。回复“是”允许${agency}使用（无需重新发送照片），或回复“否”。`,
+    'share-ask': ({ f, agency }) => `${f}您好！${agency}可以把您已核实的记录保存到 PaperEase 钱包，这样您工作过的其他机构就不必再次索取。由您决定。回复“是”表示同意，或忽略此消息。`,
+    'import-ask': ({ f, agency }) => `${f}您好！${agency}在您的 PaperEase 钱包中发现了另一家机构的已核实记录。回复“是”允许${agency}使用（无需重新发送照片），或回复“否”。`,
     'share-ok': ({ f, agency }) => `好了，${f}！您的已核实记录已保存。您可以随时请${agency}将其删除。`,
     'import-ok': ({ f, agency }) => `谢谢，${f}！${agency}将使用这些记录，办公室会进行确认。`,
     declined: ({ f }) => `没问题，${f}。不会分享任何内容。`,

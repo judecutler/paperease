@@ -207,7 +207,7 @@ export function seedDb(): Db {
   );
 
   // Grace: complete, with a full audit-ready file: every SMS-collected record has its original, fields a person confirmed,
-  // and the registration passed the registry check. Background check is kept by staff outside CareLoop.
+  // and the registration passed the registry check. Background check is kept by staff outside PaperEase.
   set('grace', {});
   {
     const who = 'Dana';

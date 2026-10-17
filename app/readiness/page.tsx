@@ -2,13 +2,13 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Shell } from '@/components/Shell';
-import { useCareLoop } from '@/components/useCareLoop';
+import { usePaperEase } from '@/components/usePaperEase';
 import type { agencyReadiness } from '@/lib/packet';
 
 type Readiness = ReturnType<typeof agencyReadiness>;
 
 export default function ReadinessPage() {
-  const { data, error, setError } = useCareLoop();
+  const { data, error, setError } = usePaperEase();
   const [r, setR] = useState<Readiness | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {

@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Shell } from '@/components/Shell';
 import { Button, Icon, ReadinessMeter, StatusBadge } from '@/components/ui';
-import { dateLabel, timeLabel, useCareLoop } from '@/components/useCareLoop';
+import { dateLabel, timeLabel, usePaperEase } from '@/components/usePaperEase';
 import { LANG_CODES, LANG_LABELS, languageLabel, packFor } from '@/lib/languages';
 import type { DocStatus, LangCode } from '@/lib/types';
 
@@ -20,7 +20,7 @@ const bucket = (s: DocStatus) =>
   s === 'approved' ? 'approved' : s === 'pending-review' || s === 'escalated' || s === 'expiring' ? 'review' : s === 'missing' ? 'missing' : 'agent';
 
 export default function Dashboard() {
-  const { data, busy, error, setError, act } = useCareLoop();
+  const { data, busy, error, setError, act } = usePaperEase();
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: '', phone: '', language: 'en' as LangCode });
@@ -41,7 +41,7 @@ export default function Dashboard() {
   const lastSweep = [...db.audit].reverse().find((e) => e.action.includes('daily sweep'));
 
   return (
-    <Shell ai={data.ai} error={error} onDismiss={() => setError(null)}>
+    <Shell ai={data.ai} me={data.me} error={error} onDismiss={() => setError(null)}>
       <div className="page-head">
         <div>
           <div className="eyebrow">{db.agency.name}</div>

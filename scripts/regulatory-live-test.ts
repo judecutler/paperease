@@ -25,7 +25,7 @@ async function main() {
     const cookies: string[] = [];
     for (let n = 0; n < 2; n++) {
       const password = randomUUID() + randomUUID();
-      const email = `careloop-validation-${randomUUID()}@example.com`;
+      const email = `paperease-validation-${randomUUID()}@example.com`;
       const user = await supabase("/auth/v1/admin/users", {
         method: "POST",
         body: JSON.stringify({ email, password, email_confirm: true }),

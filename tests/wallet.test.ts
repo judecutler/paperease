@@ -92,9 +92,9 @@ describe('wallet through the agent (two agencies)', () => {
   let save: typeof import('../lib/db').save;
   let readDoc: typeof import('../lib/db').readDoc;
   before(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'careloop-wallet-'));
-    process.env.CARELOOP_DATA_DIR = dir;
-    for (const k of ['ANTHROPIC_API_KEY', 'SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'REGISTRY_PROVIDER', 'CARELOOP_AUTH']) delete process.env[k];
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'paperease-wallet-'));
+    process.env.PAPEREASE_DATA_DIR = dir;
+    for (const k of ['ANTHROPIC_API_KEY', 'SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'REGISTRY_PROVIDER', 'SUPABASE_PUBLISHABLE_KEY']) delete process.env[k];
     ({ run } = await import('../lib/agent'));
     ({ load, save, readDoc } = await import('../lib/db'));
   });

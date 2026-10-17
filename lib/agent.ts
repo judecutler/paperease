@@ -1,16 +1,19 @@
 import { load, newId, readDoc, save, reset, writeDoc } from './db';
 import { draftSms, extractDocument, interpretReply, isOptOut, templateSms, type SmsKind } from './llm';
-import { isLangCode, languageLabel } from './languages';
+import { isLangCode, languageLabel, packFor } from './languages';
 import { SmsError, sendSms, smsStatus } from './sms';
+import { linkUrl } from './links';
 import { findSample } from './samples';
 import { isUnconfirmed } from './fields';
+import { signInRequired } from './signin';
+import { inspectPhoto, sameCaregiverName, uncheckedPhoto } from './photo-check';
 import {
   WALLET_KEY, addPending, agencyIdOf, availableFor, demoWallet, emptyWallet, hasPending, holderKey, importCredentials, isNo, isYes, publish, snapshotCredentials, takePending, walletEnabled, walletSms, withdraw,
   type WalletDoc,
 } from './wallet';
 import { approvalBlocker, findPerIdInText, needsRegistryCheck, REGISTRY_REASON_PREFIX, registryEscalation } from './registry';
 import { checkRegistry, manualRegistryCheck } from './registry-providers';
-import type { Actor, Caregiver, LangCode, Db, ExtractedFieldValue, RegistryStatus, RequirementState, RequirementType, Submission, SubmissionFile } from './types';
+import type { Actor, Caregiver, Db, ExtractedFieldValue, LangCode, RegistryStatus, RequirementState, RequirementType, SmsMessage, Submission, SubmissionFile } from './types';
 
 export type Action =
   | { type: 'run-gap-check' }
@@ -18,12 +21,14 @@ export type Action =
   | { type: 'authorize-outreach'; caregiverId: string; requirementId: string }
   | { type: 'authorize-all' }
   | { type: 'send-reminder'; caregiverId: string; requirementId: string }
-  | { type: 'caregiver-reply'; caregiverId: string; text?: string; sampleId?: string; upload?: SubmissionFile }
+  | { type: 'caregiver-reply'; caregiverId: string; text?: string; sampleId?: string; upload?: SubmissionFile; requirementId?: string; via?: 'link' }
   | { type: 'verify-field'; submissionId: string; key: string }
   | { type: 'edit-field'; submissionId: string; key: string; value: string }
   | { type: 'approve'; submissionId: string }
   | { type: 'reject'; submissionId: string; reason?: string }
   | { type: 'request-another'; submissionId: string }
+  | { type: 'staff-record'; caregiverId: string; requirementId: string; upload?: SubmissionFile }
+  | { type: 'attach-file'; submissionId: string; upload: SubmissionFile }
   | { type: 'check-registry'; submissionId: string }
   | { type: 'record-registry-check'; submissionId: string; result: RegistryStatus | 'NOT_FOUND' }
   | { type: 'add-caregiver'; name: string; phone: string; language: LangCode }
@@ -38,12 +43,22 @@ export type Action =
 const OPEN: RequirementState['status'][] = ['requested', 'following-up'];
 const now = () => new Date().toISOString();
 
+// texts that ask the caregiver for something carry the secure upload link for that request
+const LINK_KINDS: SmsKind[] = ['request', 'reminder', 'follow-up', 'wrong-doc', 'request-another'];
+
 class Ctx {
   walletDoc?: WalletDoc;
   walletDirty = false;
+  /** true when running on a regulatory workspace's own store (opts.db): no wallet, no real texts */
+  scoped = false;
   /** texts waiting to leave the server; sent once the action has finished (see flushOutbox) */
   outbox: { caregiverId: string; text: string; force: boolean }[] = [];
-  constructor(public db: Db) {}
+  /** origin is the app's public URL, used to build upload links; without it texts go out with no link.
+   *  admin is the signed-in person acting, recorded on decisions; demo mode without login uses the agency's admin. */
+  admin: string;
+  constructor(public db: Db, public origin?: string, admin?: string) {
+    this.admin = admin || db.agency.admin;
+  }
   caregiver(id: string) {
     const c = this.db.caregivers.find((x) => x.id === id);
     if (!c) throw new Error(`Unknown caregiver ${id}`);
@@ -70,11 +85,15 @@ class Ctx {
   /** Every outgoing text goes through here. */
   send(cg: Caregiver, text: string, force = false) {
     this.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text, time: now() });
-    if (smsStatus().mode === 'live') this.outbox.push({ caregiverId: cg.id, text, force });
+    if (!this.scoped && smsStatus().mode === 'live') this.outbox.push({ caregiverId: cg.id, text, force });
   }
   async sms(kind: SmsKind, cg: Caregiver, req: RequirementType, extra: { missingField?: { key: string; label: string }; documentType?: string } = {}) {
     if (cg.optedOut && kind !== 'opted-out') return;
-    const text = await draftSms(kind, { caregiver: cg, requirement: req, ...extra });
+    let text = await draftSms(kind, { caregiver: cg, requirement: req, ...extra });
+    // appended after drafting so the model never writes or sees the URL
+    const subId = this.db.requirements.find((s) => s.caregiverId === cg.id && s.requirementId === req.id)?.openSubmissionId;
+    const link = this.origin && subId && LINK_KINDS.includes(kind) ? linkUrl(this.origin, subId) : null;
+    if (link) text += `\n${packFor(cg.language)?.uploadHere ?? 'Or upload it here'}: ${link}`;
     this.send(cg, text);
     return text;
   }
@@ -119,13 +138,6 @@ export function detectGaps(db: Db) {
 
 /* ---------------- record evaluation ---------------- */
 
-const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z ]/g, '').trim();
-function sameName(a: string, b: string) {
-  const ta = norm(a).split(/\s+/);
-  const tb = norm(b).split(/\s+/);
-  return ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1];
-}
-
 export function unverifiedCount(sub: Submission) {
   return sub.fields.filter(isUnconfirmed).length;
 }
@@ -135,7 +147,7 @@ type Verdict = { kind: 'ready' } | { kind: 'follow-up'; field: ExtractedFieldVal
 function evaluate(c: Ctx, sub: Submission, cg: Caregiver, req: RequirementType): Verdict {
   const minConf = c.db.rules.minConfidence;
   const name = sub.fields.find((f) => f.key === 'name');
-  if (name?.value && (name.confidence ?? 1) >= minConf && !sameName(name.value, cg.name)) {
+  if (name?.value && (name.confidence ?? 1) >= minConf && !sameCaregiverName(name.value, cg.name)) {
     return { kind: 'escalate', reason: `The document is in the name "${name.value}", which does not match ${cg.name}.` };
   }
   const low = sub.fields.find((f) => f.required && f.value !== null && f.source === 'ai' && (f.confidence ?? 1) < minConf);
@@ -144,7 +156,7 @@ function evaluate(c: Ctx, sub: Submission, cg: Caregiver, req: RequirementType):
   if (req.minHours && hours?.value && Number(hours.value) < req.minHours) {
     return { kind: 'escalate', reason: `${hours.source === 'caregiver' ? `${cg.firstName} reported` : 'The document shows'} ${hours.value} training hours; this requirement needs at least ${req.minHours}.` };
   }
-  const missing = sub.fields.find((f) => f.required && f.value === null);
+  const missing = sub.fields.find((f) => f.required && !f.value?.trim());
   if (missing) {
     if (sub.followUps >= c.db.rules.maxFollowUps) {
       return { kind: 'escalate', reason: `${missing.label} is still missing after ${sub.followUps} follow-ups.` };
@@ -232,10 +244,11 @@ async function applyVerdict(c: Ctx, v: Verdict, sub: Submission, state: Requirem
 
 /* ---------------- caregiver replies ---------------- */
 
-function openStateFor(c: Ctx, cgId: string) {
+function openStateFor(c: Ctx, cgId: string, requirementId?: string) {
   const open = c.db.requirements.filter((s) => s.caregiverId === cgId && OPEN.includes(s.status) && s.openSubmissionId);
-  // most recently opened request first
-  return open.sort((a, b) => c.sub(b.openSubmissionId!).createdAt.localeCompare(c.sub(a.openSubmissionId!).createdAt))[0];
+  if (requirementId) return open.find((s) => s.requirementId === requirementId);
+  // Never silently attach a reply to the wrong request when several are open.
+  return open.length === 1 ? open[0] : undefined;
 }
 
 async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-reply' }>) {
@@ -243,12 +256,14 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
   const sample = a.sampleId ? findSample(a.sampleId) : undefined;
   const file: SubmissionFile | undefined = a.upload ?? (sample ? { name: sample.file.split('/').pop()!, url: sample.file, mime: 'image/png' } : undefined);
   const text = a.text?.trim();
-  c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'caregiver', text: text || undefined, attachment: file, time: now() });
+  const message: SmsMessage = { id: newId('msg'), caregiverId: cg.id, from: 'caregiver', text: text || undefined, attachment: file, time: now() };
+  c.db.messages.push(message);
 
   if (text && isOptOut(text)) {
+    if (file) message.photoCheck = uncheckedPhoto('This attachment was not analyzed because the message opted out of SMS. Contact agency staff.');
     cg.optedOut = true;
     c.log({ caregiverId: cg.id, actor: 'caregiver', who: cg.name, action: 'opted out of SMS', detail: `Replied "${text}".` });
-    if (walletEnabled()) {
+    if (walletEnabled() && !c.scoped) {
       // leaving also takes this agency's records out of the wallet and cancels any open wallet question
       const doc = await wallet(c);
       const me = agencyRef(c.db);
@@ -266,25 +281,46 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
     return;
   }
 
-  if (text && !file && (await walletConsent(c, cg, text))) return;
+  // a YES/NO to a credential wallet question is answered before anything else
+  if (text && !file && a.via !== 'link' && (await walletConsent(c, cg, text))) return;
 
-  const state = openStateFor(c, cg.id);
-  c.log({ caregiverId: cg.id, requirementId: state?.requirementId, actor: 'caregiver', who: cg.name, action: file ? 'replied with a photo' : 'replied by text', detail: file ? file.name : `"${text}"` });
+  if (file && (!cg.smsConsent || cg.optedOut)) {
+    message.photoCheck = uncheckedPhoto('SMS document collection is not enabled for this caregiver. Contact agency staff.');
+    c.log({ caregiverId: cg.id, actor: 'agent', action: 'left an attachment for staff', detail: message.photoCheck.summary });
+    return;
+  }
+
+  // a reply through an upload link names its request; an SMS only matches when exactly one request is open
+  const state = openStateFor(c, cg.id, a.requirementId);
+  const action = a.via === 'link' ? (file ? 'uploaded a document through the secure link' : 'answered through the secure link') : file ? 'replied with a photo' : 'replied by text';
+  c.log({ caregiverId: cg.id, requirementId: state?.requirementId, actor: 'caregiver', who: cg.name, action, detail: file ? file.name : `"${text}"` });
   if (!state) {
-    c.log({ caregiverId: cg.id, actor: 'agent', action: 'escalated an unexpected message', detail: 'No open request for this caregiver. Left for staff.' });
-    c.send(cg, templateSms('passed-on', { caregiver: cg, requirement: c.db.rules.requirements[0] }));
+    const reason = a.requirementId
+      ? 'The selected document request is no longer open. Ask staff to open a request before sending another photo.'
+      : 'Choose one open document request before sending a photo. This attachment was left for staff and was not analyzed.';
+    if (file) message.photoCheck = uncheckedPhoto(reason);
+    c.log({ caregiverId: cg.id, actor: 'agent', action: 'left an unmatched message for staff', detail: reason });
+    c.send(cg, templateSms('select-request', { caregiver: cg, requirement: c.db.rules.requirements[0] }));
     return;
   }
   const req = c.req(state.requirementId);
   const sub = c.sub(state.openSubmissionId!);
 
   if (file) {
+    if (!req.smsCollectible) {
+      message.photoCheck = uncheckedPhoto('This document must be collected directly by agency staff.', req.name);
+      return;
+    }
     sub.files.push(file);
     const ex = await extractDocument(req, file.url, a.sampleId);
+    message.photoCheck = inspectPhoto({ caregiver: cg, requirement: req, extraction: ex, minConfidence: c.db.rules.minConfidence, existingFields: sub.fields });
+    c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'checked an uploaded photo', detail: `${message.photoCheck.status} (${message.photoCheck.source}): ${message.photoCheck.summary}` });
+    // Even a rejected/unreadable first photo leaves required blanks for staff
+    // to fill; an empty field array must never make approval look available.
+    if (!sub.fields.length) sub.fields = req.fields.map((f) => ({ key: f.key, label: f.label, required: f.required, value: null, source: 'ai' }));
     sub.extractedBy = ex.by === 'none' ? sub.extractedBy : ex.by;
     if (!ex.readable) {
       // keep whatever fields we have so the admin can fill them in by hand
-      if (!sub.fields.length) sub.fields = req.fields.map((f) => ({ key: f.key, label: f.label, required: f.required, value: null, source: 'ai' }));
       c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'could not read the document', detail: ex.note });
       return applyVerdict(c, { kind: 'escalate', reason: ex.note || 'The document could not be read.' }, sub, state, cg, req);
     }
@@ -299,13 +335,20 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
       await c.sms('wrong-doc', cg, req, { documentType: ex.documentType });
       return;
     }
+    // Check this attachment before merging, so an earlier value cannot hide a
+    // conflicting name, low-confidence reading, or invalid training hours.
+    if (message.photoCheck.status === 'needs-review') {
+      const reason = message.photoCheck.checks.filter((item) => item.status === 'attention').map((item) => item.detail).join(' ');
+      return applyVerdict(c, { kind: 'escalate', reason: reason || message.photoCheck.summary }, sub, state, cg, req);
+    }
     // merge: new values fill fields that are still empty, so a second document can complete the first
     const prev = new Map(sub.fields.map((f) => [f.key, f]));
     sub.fields = req.fields.map((spec) => {
       const old = prev.get(spec.key);
       const got = ex.fields[spec.key];
-      if (old?.value) return old;
-      return { key: spec.key, label: spec.label, required: spec.required, value: got?.value ?? null, source: 'ai', confidence: got?.value ? got.confidence : undefined, sourceRef: got?.value ? `${file.name} · ${got.sourceRef ?? 'p.1'}` : undefined };
+      if (old?.value?.trim()) return old;
+      const value = got?.value?.trim() || null;
+      return { key: spec.key, label: spec.label, required: spec.required, value, source: 'ai', confidence: value ? got.confidence : undefined, sourceRef: value ? `${file.name} · ${got.sourceRef ?? 'p.1'}` : undefined };
     });
     const filled = sub.fields.filter((f) => f.value).length;
     c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: `extracted ${filled} of ${sub.fields.length} fields`, detail: [ex.by === 'claude' ? 'Read by Claude.' : 'Demo extraction.', ex.note].filter(Boolean).join(' ') });
@@ -320,7 +363,7 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
       const idInText = missing.key === 'registration_number' ? findPerIdInText(text) : null;
       const got = idInText ? { value: idInText, confidence: 0.85 } : await interpretReply(text, spec);
       if (got.value) {
-        Object.assign(missing, { value: got.value, source: 'caregiver', confidence: got.confidence, sourceRef: `SMS reply: "${text.slice(0, 60)}"` });
+        Object.assign(missing, { value: got.value, source: 'caregiver', confidence: got.confidence, sourceRef: `${a.via === 'link' ? 'Link answer' : 'SMS reply'}: "${text.slice(0, 60)}"` });
         c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: `read ${missing.label.toLowerCase()} from the reply`, detail: `${got.value}. Marked as caregiver-reported until verified.` });
         return applyVerdict(c, await evaluateFresh(c, sub, cg, req), sub, state, cg, req);
       }
@@ -349,7 +392,7 @@ async function authorize(c: Ctx, caregiverId: string, requirementId: string, by:
   state.openSubmissionId = sub.id;
   state.status = 'requested';
   state.explanation = `Agent asked ${cg.firstName} by SMS. Waiting for a reply.`;
-  if (by === 'admin') c.log({ caregiverId, requirementId, actor: 'admin', who: c.db.agency.admin, action: 'authorized outreach' });
+  if (by === 'admin') c.log({ caregiverId, requirementId, actor: 'admin', who: c.admin, action: 'authorized outreach' });
   else c.log({ caregiverId, requirementId, actor: 'system', action: 'authorized outreach by rule', detail: 'Automatic requests are on in Rules.' });
   await c.sms('request', cg, req);
   c.log({ caregiverId, requirementId, actor: 'agent', action: cg.language === 'en' ? 'sent an SMS request' : `sent an SMS request in ${languageLabel(cg.language)}`, detail: cg.phone });
@@ -359,11 +402,12 @@ async function authorize(c: Ctx, caregiverId: string, requirementId: string, by:
 /* ---------------- credential wallet ---------------- */
 
 async function wallet(c: Ctx): Promise<WalletDoc> {
+  if (c.scoped) throw new Error('The credential wallet is not available in this workspace.');
   if (!walletEnabled()) throw new Error('The credential wallet is not configured. Set WALLET_PEPPER.');
   if (!c.walletDoc) {
     const stored = await readDoc<WalletDoc>(WALLET_KEY);
     // the open demo shows the second-agency path with a sample "other agency"; signed-in deployments start empty
-    c.walletDoc = stored ?? (process.env.CARELOOP_AUTH === 'required' ? emptyWallet() : demoWallet());
+    c.walletDoc = stored ?? (signInRequired() ? emptyWallet() : demoWallet());
     if (!stored) c.walletDirty = true;
   }
   return c.walletDoc;
@@ -383,7 +427,7 @@ async function walletOfferShare(c: Ctx, caregiverId: string) {
   addPending(doc, { kind: 'share', caregiverId: cg.id, agencyId: agencyRef(c.db).id, agencyName: c.db.agency.name });
   touchWallet(c);
   c.send(cg, walletSms('share-ask', cg, c.db.agency.name));
-  c.log({ caregiverId: cg.id, actor: 'admin', who: c.db.agency.admin, action: 'asked permission to add verified records to the credential wallet', detail: 'Waiting for the caregiver to reply YES.' });
+  c.log({ caregiverId: cg.id, actor: 'admin', who: c.admin, action: 'asked permission to add verified records to the credential wallet', detail: 'Waiting for the caregiver to reply YES.' });
 }
 
 async function walletRequest(c: Ctx, caregiverId: string) {
@@ -398,7 +442,7 @@ async function walletRequest(c: Ctx, caregiverId: string) {
     touchWallet(c);
     c.send(cg, walletSms('import-ask', cg, c.db.agency.name));
   }
-  c.log({ caregiverId: cg.id, actor: 'admin', who: c.db.agency.admin, action: 'checked the credential wallet', detail: `If ${cg.firstName} has records from other agencies, ${cg.firstName} is asked for permission before anything is shared.` });
+  c.log({ caregiverId: cg.id, actor: 'admin', who: c.admin, action: 'checked the credential wallet', detail: `If ${cg.firstName} has records from other agencies, ${cg.firstName} is asked for permission before anything is shared.` });
 }
 
 async function walletWithdraw(c: Ctx, caregiverId: string) {
@@ -406,12 +450,12 @@ async function walletWithdraw(c: Ctx, caregiverId: string) {
   const doc = await wallet(c);
   const removed = withdraw(doc, holderKey(cg.phone), agencyRef(c.db));
   touchWallet(c);
-  c.log({ caregiverId: cg.id, actor: 'admin', who: c.db.agency.admin, action: 'removed records from the credential wallet', detail: removed ? `${removed} record${removed === 1 ? '' : 's'} removed. Copies other agencies already imported stay in their own files.` : 'This agency had nothing in the wallet.' });
+  c.log({ caregiverId: cg.id, actor: 'admin', who: c.admin, action: 'removed records from the credential wallet', detail: removed ? `${removed} record${removed === 1 ? '' : 's'} removed. Copies other agencies already imported stay in their own files.` : 'This agency had nothing in the wallet.' });
 }
 
 /** A YES/NO reply to a wallet question. Returns false when no question is waiting, so the reply is handled as usual. */
 async function walletConsent(c: Ctx, cg: Caregiver, text: string): Promise<boolean> {
-  if (!walletEnabled() || (!isYes(text) && !isNo(text))) return false;
+  if (c.scoped || !walletEnabled() || (!isYes(text) && !isNo(text))) return false;
   const doc = await wallet(c);
   const me = agencyRef(c.db);
   if (!hasPending(doc, me.id, cg.id)) return false;
@@ -464,7 +508,7 @@ async function flushOutbox(c: Ctx) {
       const code = err instanceof SmsError ? err.code : null;
       if (code === 21610) {
         cg.optedOut = true;
-        if (!m.force) c.log({ caregiverId: cg.id, actor: 'system', action: 'marked as opted out', detail: 'The carrier reports this number has stopped messages from CareLoop.' });
+        if (!m.force) c.log({ caregiverId: cg.id, actor: 'system', action: 'marked as opted out', detail: 'The carrier reports this number has stopped messages from PaperEase.' });
       } else {
         c.log({ caregiverId: cg.id, actor: 'system', action: 'a text could not be sent', detail: err instanceof SmsError ? `Twilio error ${code}: ${err.message}` : 'The messaging service could not be reached.' });
       }
@@ -526,17 +570,37 @@ async function sweep(c: Ctx, trigger: 'schedule' | 'admin') {
   ].filter(Boolean);
   c.log({
     actor: trigger === 'admin' ? 'admin' : 'system',
-    who: trigger === 'admin' ? c.db.agency.admin : undefined,
+    who: trigger === 'admin' ? c.admin : undefined,
     action: trigger === 'admin' ? 'ran the daily sweep' : 'ran the scheduled daily sweep',
     detail: [did.length ? did.join(', ') + '.' : 'Nothing to send.', ...changes].join(' '),
   });
 }
 
-export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
-  if (suppliedDb && ['reset', 'add-caregiver'].includes(action.type)) throw new Error('Use regulatory onboarding to manage this workspace.');
+/** adds a staff-supplied document; with AI reading on, it fills fields that are still empty */
+async function attachToRecord(c: Ctx, sub: Submission, req: RequirementType, file: SubmissionFile) {
+  sub.files.push(file);
+  c.log({ caregiverId: sub.caregiverId, requirementId: req.id, actor: 'admin', who: c.admin, action: 'attached a document', detail: file.name });
+  if (!file.mime.startsWith('image/')) return;
+  const ex = await extractDocument(req, file.url);
+  if (ex.by !== 'claude' || !ex.readable || !ex.matchesRequirement) return;
+  let filled = 0;
+  for (const f of sub.fields) {
+    const got = ex.fields[f.key];
+    if (f.value !== null || !got?.value) continue;
+    Object.assign(f, { value: got.value, source: 'ai', confidence: got.confidence, sourceRef: `${file.name} · ${got.sourceRef ?? 'p.1'}` });
+    filled++;
+  }
+  sub.extractedBy = 'claude';
+  c.log({ caregiverId: sub.caregiverId, requirementId: req.id, actor: 'agent', action: `read ${filled} field${filled === 1 ? '' : 's'} from the attached document`, detail: 'Each value still needs a person to verify it.' });
+}
+
+export async function run(action: Action, opts: { origin?: string; admin?: string; db?: Db } = {}): Promise<Db> {
+  // opts.db: a regulatory workspace's store, which cannot be reset or grow caregivers from here
+  if (opts.db && ['reset', 'add-caregiver'].includes(action.type)) throw new Error('Use regulatory onboarding to manage this workspace.');
   if (action.type === 'reset') return await reset();
-  const db = suppliedDb || await load();
-  const c = new Ctx(db);
+  const db = opts.db || await load();
+  const c = new Ctx(db, opts.origin, opts.admin);
+  c.scoped = !!opts.db;
   switch (action.type) {
     case 'run-gap-check': {
       const changes = detectGaps(db);
@@ -557,14 +621,14 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
         if (!c.req(s.requirementId).smsCollectible || !cg.smsConsent || cg.optedOut) continue;
         if (await authorize(c, s.caregiverId, s.requirementId)) sent++;
       }
-      c.log({ actor: 'admin', who: db.agency.admin, action: `delegated ${sent} gap${sent === 1 ? '' : 's'} to the agent` });
+      c.log({ actor: 'admin', who: c.admin, action: `delegated ${sent} gap${sent === 1 ? '' : 's'} to the agent` });
       break;
     }
     case 'send-reminder': {
       const cg = c.caregiver(action.caregiverId);
       const req = c.req(action.requirementId);
       await c.sms('reminder', cg, req);
-      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent a reminder', detail: `Requested by ${db.agency.admin}.` });
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent a reminder', detail: `Requested by ${c.admin}.` });
       break;
     }
     case 'caregiver-reply':
@@ -579,13 +643,13 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
         const before = f.value;
         f.value = action.value.trim() || null;
         f.source = 'edited';
-        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: db.agency.admin, action: `corrected ${f.label.toLowerCase()}`, detail: `${before ?? 'empty'} → ${f.value ?? 'empty'}` });
+        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: c.admin, action: `${before === null ? 'entered' : 'corrected'} ${f.label.toLowerCase()}`, detail: before === null ? f.value ?? 'empty' : `${before} → ${f.value ?? 'empty'}` });
       } else {
         if (f.value === null) throw new Error('Nothing to verify: enter a value first.');
         f.source = 'verified';
-        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: db.agency.admin, action: `verified ${f.label.toLowerCase()}`, detail: f.value });
+        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: c.admin, action: `verified ${f.label.toLowerCase()}`, detail: f.value });
       }
-      f.verifiedBy = db.agency.admin.split(' ')[0];
+      f.verifiedBy = c.admin.split(' ')[0];
       // a corrected registration number is a new question for the registry
       if (action.type === 'edit-field' && f.key === 'registration_number' && needsRegistryCheck(sub.requirementId) && sub.state !== 'approved' && sub.state !== 'rejected') {
         sub.registryCheck = undefined;
@@ -613,12 +677,12 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       if (sub.state === 'approved' || sub.state === 'rejected') throw new Error('This record is closed. Request a new document to check again.');
       const num = registryNumber(sub)?.value;
       if (!num) throw new Error('There is no registration number to record a result for yet. Enter it first.');
-      sub.registryCheck = manualRegistryCheck(cg.name, num, action.result, db.agency.admin);
+      sub.registryCheck = manualRegistryCheck(cg.name, num, action.result, c.admin);
       c.log({
         caregiverId: cg.id,
         requirementId: req.id,
         actor: 'admin',
-        who: db.agency.admin,
+        who: c.admin,
         action: 'recorded a California HCA registry lookup',
         detail: `${cg.name}, ID ${sub.registryCheck.perIdMasked}: ${action.result === 'NOT_FOUND' ? 'no match' : action.result}`,
       });
@@ -630,7 +694,7 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       const cg = c.caregiver(action.caregiverId);
       if (action.code === 21610) {
         cg.optedOut = true;
-        c.log({ caregiverId: cg.id, actor: 'system', action: 'marked as opted out', detail: 'The carrier reports this number has stopped messages from CareLoop.' });
+        c.log({ caregiverId: cg.id, actor: 'system', action: 'marked as opted out', detail: 'The carrier reports this number has stopped messages from PaperEase.' });
       } else {
         c.log({ caregiverId: cg.id, actor: 'system', action: 'a text was not delivered', detail: action.code ? `Carrier error ${action.code}.` : 'The carrier could not deliver it.' });
       }
@@ -639,7 +703,7 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
     case 'export-packet': {
       // exporting a personnel file is itself an access to personal data, so it is written to the audit trail
       const cg = c.caregiver(action.caregiverId);
-      c.log({ caregiverId: cg.id, actor: 'admin', who: db.agency.admin, action: 'exported the personnel file', detail: 'Audit packet generated.' });
+      c.log({ caregiverId: cg.id, actor: 'admin', who: c.admin, action: 'exported the personnel file', detail: 'Audit packet generated.' });
       break;
     }
     case 'wallet-offer-share':
@@ -653,8 +717,9 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       break;
     case 'approve': {
       const sub = c.sub(action.submissionId);
-      if (unverifiedCount(sub) > 0) throw new Error('Every field must be verified by a person before approval.');
       const req = c.req(sub.requirementId);
+      const requiredMissing = req.fields.some((spec) => spec.required && !sub.fields.find((field) => field.key === spec.key)?.value?.trim());
+      if (requiredMissing || unverifiedCount(sub) > 0) throw new Error('Every field must be verified by a person before approval.');
       if (needsRegistryCheck(req.id)) {
         const blocker = approvalBlocker(sub.registryCheck);
         if (blocker) throw new Error(blocker);
@@ -668,8 +733,8 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       state.approvedSubmissionId = sub.id;
       state.openSubmissionId = undefined;
       state.expiresOn = val('expiration_date') || (base && req.validMonths ? addMonths(base, req.validMonths) : undefined);
-      state.explanation = `Approved by ${db.agency.admin}.`;
-      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: db.agency.admin, action: 'approved the record', detail: state.expiresOn ? `Valid until ${fmt(state.expiresOn)}.` : 'No expiry.' });
+      state.explanation = `Approved by ${c.admin}.`;
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: c.admin, action: 'approved the record', detail: state.expiresOn ? `Valid until ${fmt(state.expiresOn)}.` : 'No expiry.' });
       detectGaps(db);
       await c.sms('approved', cg, req);
       break;
@@ -680,8 +745,8 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       sub.state = 'rejected';
       state.status = 'missing';
       state.openSubmissionId = undefined;
-      state.explanation = `Submission rejected by ${db.agency.admin}${action.reason ? `: ${action.reason}` : '.'}`;
-      c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: db.agency.admin, action: 'rejected the submission', detail: action.reason });
+      state.explanation = `Submission rejected by ${c.admin}${action.reason ? `: ${action.reason}` : '.'}`;
+      c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: c.admin, action: 'rejected the submission', detail: action.reason });
       break;
     }
     case 'request-another': {
@@ -689,15 +754,47 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       const cg = c.caregiver(sub.caregiverId);
       const req = c.req(sub.requirementId);
       const state = c.state(sub.caregiverId, sub.requirementId);
+      // a staff-only document (background check) or a caregiver who cannot be texted is never asked over SMS
+      if (!req.smsCollectible) throw new Error(`${req.name} is collected by staff, not over SMS. Use Add record instead.`);
+      if (!cg.smsConsent || cg.optedOut) throw new Error(`${cg.name} cannot be texted. Enter the document yourself instead.`);
       sub.state = 'rejected';
       const next: Submission = { id: newId('sub'), caregiverId: cg.id, requirementId: req.id, files: [], fields: [], extractedBy: 'none', createdAt: now(), state: 'collecting', followUps: 0, supersedes: sub.id };
       db.submissions.push(next);
       state.openSubmissionId = next.id;
       state.status = 'requested';
-      state.explanation = `${db.agency.admin} asked for another document. Agent is waiting for ${cg.firstName}.`;
-      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: db.agency.admin, action: 'requested another document' });
+      state.explanation = `${c.admin} asked for another document. Agent is waiting for ${cg.firstName}.`;
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: c.admin, action: 'requested another document' });
       await c.sms('request-another', cg, req);
       c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent an SMS request' });
+      break;
+    }
+    case 'staff-record': {
+      // staff enter a document themselves: a background check, a paper copy handed in, or after an opt-out (PRD: missing -> processing)
+      const cg = c.caregiver(action.caregiverId);
+      const req = c.req(action.requirementId);
+      const state = c.state(cg.id, req.id);
+      if (state.status === 'pending-review') throw new Error('There is already a record waiting for review. Review or reject it first.');
+      if (state.status === 'approved') throw new Error(`${req.name} is already approved.`);
+      if (state.openSubmissionId) {
+        const old = c.sub(state.openSubmissionId);
+        if (old.state !== 'approved') old.state = 'rejected';
+      }
+      const sub: Submission = {
+        id: newId('sub'), caregiverId: cg.id, requirementId: req.id, files: [], extractedBy: 'none', createdAt: now(), state: 'ready', followUps: 0, supersedes: state.openSubmissionId,
+        fields: req.fields.map((f) => ({ key: f.key, label: f.label, required: f.required, value: null, source: 'edited' })),
+      };
+      db.submissions.push(sub);
+      state.openSubmissionId = sub.id;
+      state.status = 'pending-review';
+      state.explanation = `${c.admin} is entering this record. Fill in and verify each field, then approve.`;
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: c.admin, action: 'started a record by hand', detail: action.upload ? action.upload.name : 'No document attached yet.' });
+      if (action.upload) await attachToRecord(c, sub, req, action.upload);
+      break;
+    }
+    case 'attach-file': {
+      const sub = c.sub(action.submissionId);
+      if (sub.state === 'approved' || sub.state === 'rejected') throw new Error('This record is closed. Start a new one to add a document.');
+      await attachToRecord(c, sub, c.req(sub.requirementId), action.upload);
       break;
     }
     case 'add-caregiver': {
@@ -710,7 +807,7 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
         db.requirements.push({ caregiverId: id, requirementId: r.id, status: 'missing', explanation: `No ${r.name.toLowerCase()} on file. ${r.rule}` });
       }
       detectGaps(db);
-      c.log({ caregiverId: id, actor: 'admin', who: db.agency.admin, action: 'added a caregiver', detail: `${name}, ${db.rules.requirements.length} requirements flagged as missing.` });
+      c.log({ caregiverId: id, actor: 'admin', who: c.admin, action: 'added a caregiver', detail: `${name}, ${db.rules.requirements.length} requirements flagged as missing.` });
       break;
     }
     case 'update-rules': {
@@ -722,12 +819,12 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       db.rules.maxReminders = Math.max(0, Math.round(action.maxReminders));
       const changes = detectGaps(db);
       const r = db.rules;
-      c.log({ actor: 'admin', who: db.agency.admin, action: 'updated compliance rules', detail: `Expiring window ${r.expiringWithinDays} days, confidence floor ${Math.round(r.minConfidence * 100)}%, ${r.maxFollowUps} follow-ups. Daily sweep: ${r.autoRequest ? 'requests new gaps' : 'waits for an admin to request'}, reminds after ${r.reminderAfterDays} day${r.reminderAfterDays === 1 ? '' : 's'}, escalates after ${r.maxReminders} reminder${r.maxReminders === 1 ? '' : 's'}.${changes.length ? ' ' + changes.join('; ') : ''}` });
+      c.log({ actor: 'admin', who: c.admin, action: 'updated compliance rules', detail: `Expiring window ${r.expiringWithinDays} days, confidence floor ${Math.round(r.minConfidence * 100)}%, ${r.maxFollowUps} follow-ups. Daily sweep: ${r.autoRequest ? 'requests new gaps' : 'waits for an admin to request'}, reminds after ${r.reminderAfterDays} day${r.reminderAfterDays === 1 ? '' : 's'}, escalates after ${r.maxReminders} reminder${r.maxReminders === 1 ? '' : 's'}.${changes.length ? ' ' + changes.join('; ') : ''}` });
       break;
     }
   }
   await flushOutbox(c);
   if (c.walletDirty && c.walletDoc) await writeDoc(WALLET_KEY, c.walletDoc);
-  if (!suppliedDb) await save(db);
+  if (!opts.db) await save(db);
   return db;
 }

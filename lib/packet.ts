@@ -52,7 +52,7 @@ export interface Packet {
 }
 
 const isChecked = (f: ExtractedFieldValue) => f.source === 'verified' || f.source === 'edited';
-const whoOf = (e: AuditEvent) => e.who || ({ agent: 'CareLoop agent', admin: 'Admin', caregiver: 'Caregiver', system: 'System' } as const)[e.actor];
+const whoOf = (e: AuditEvent) => e.who || ({ agent: 'PaperEase agent', admin: 'Admin', caregiver: 'Caregiver', system: 'System' } as const)[e.actor];
 const toEvent = (e: AuditEvent): PacketEvent => ({ time: e.time, who: whoOf(e), action: e.action, ...(e.detail ? { detail: e.detail } : {}) });
 
 function buildItem(db: Db, cg: Caregiver, req: RequirementType, asOf: Date): PacketItem {
@@ -158,7 +158,7 @@ export function renderPacketHtml(p: Packet, originals: Record<string, Original> 
           const view = o?.dataUri ? (f.mime.startsWith('image/') ? `<img src="${esc(o.dataUri)}" alt="${esc(f.name)}">` : `<a href="${esc(o.dataUri)}" download="${esc(f.name)}">Download ${esc(f.name)}</a>`) : '';
           return `<figure><figcaption>${esc(f.name)}</figcaption>${view}${meta}</figure>`;
         }).join('')
-      : i.collectedByStaff ? '<p class="mut">Kept by the agency outside CareLoop (not collected by text).</p>' : '<p class="bad">No original on file.</p>';
+      : i.collectedByStaff ? '<p class="mut">Kept by the agency outside PaperEase (not collected by text).</p>' : '<p class="bad">No original on file.</p>';
     const reg = i.registry
       ? `<div class="box"><strong>California registry lookup</strong> ${i.registry.verdict === 'pass' ? '<span class="ok">Active</span>' : '<span class="bad">Not confirmed</span>'}<br>ID ${esc(i.registry.idMasked)} · name searched “${esc(i.registry.searchedName)}” · status ${esc(i.registry.status ?? i.registry.outcome)}${i.registry.checkedAt ? ` · ${esc(stamp(i.registry.checkedAt))} · ${esc(i.registry.checkedBy)}` : ''}${i.registry.note ? `<div class="mut">${esc(i.registry.note)}</div>` : ''}</div>`
       : '';

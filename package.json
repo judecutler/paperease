@@ -1,8 +1,10 @@
 {
-  "name": "careloop-app",
+  "name": "paperease-app",
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:photo": "tsx --import ./tests/offline-env.mjs --test tests/photo-check.test.mjs tests/photo-flow.test.cjs",
+    "test:all": "tsx --import ./tests/offline-env.mjs --test tests/*.test.*",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -16,10 +18,12 @@
     "regulatory:inventory": "tsx scripts/regulatory-inventory.ts",
     "demo": "node scripts/regulatory-demo.mjs",
     "regulatory:live-test": "tsx scripts/regulatory-live-test.ts",
-    "regulatory:import": "tsx scripts/regulatory-import.ts"
+    "regulatory:import": "tsx scripts/regulatory-import.ts",
+    "admin:add": "tsx --env-file=.env.local scripts/add-admin.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
+    "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.118.0",
     "next": "^15.5.28",
     "react": "^19.3.1",

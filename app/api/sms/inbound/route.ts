@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     const db = await load();
     const cg = caregiverByPhone(db, params.From ?? '');
     if (!cg) {
-      console.warn('[careloop] text from a number that is not a caregiver; ignored');
+      console.warn('[paperease] text from a number that is not a caregiver; ignored');
       return EMPTY();
     }
     const upload = await storeMedia(params);
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     return EMPTY();
   } catch (err) {
     if (err instanceof WebhookError) return new Response(err.message, { status: err.status });
-    console.error('[careloop] inbound text failed:', (err as Error).message);
+    console.error('[paperease] inbound text failed:', (err as Error).message);
     return new Response('Error', { status: 500 });
   }
 }

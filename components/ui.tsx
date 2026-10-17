@@ -1,7 +1,8 @@
-// TSX port of the CareLoop design system reference components (design-system/reference-components.js).
+// TSX port of the PaperEase design system reference components (design-system/reference-components.js).
 // Class names match app/components.css.
 import type React from 'react';
-import type { DocStatus } from '@/lib/types';
+import type { DocStatus, PhotoCheck } from '@/lib/types';
+import { PhotoCheckCard } from '@/components/PhotoCheckCard';
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 
@@ -62,21 +63,22 @@ export function ExtractedField(props: {
   confidence?: number;
   sourceRef?: string;
   verifiedBy?: string;
-  missing?: boolean;
+  /** true: the AI did not find it on the document; a string: why the value is still empty, e.g. for staff entry */
+  missing?: boolean | string;
   children?: React.ReactNode;
 }) {
   const source = props.source || 'ai';
   const unchecked = source === 'ai' || source === 'caregiver' || source === 'imported';
   const low = unchecked && typeof props.confidence === 'number' && props.confidence < 0.8;
   let meta: React.ReactNode;
-  if (props.missing) meta = <span className="cl-field-tag cl-tone-attention"><Icon name="flag" />Not found on document</span>;
+  if (props.missing) meta = <span className="cl-field-tag cl-tone-attention"><Icon name="flag" />{typeof props.missing === 'string' ? props.missing : 'Not found on document'}</span>;
   else if (source === 'verified') meta = <span className="cl-field-tag cl-tone-pine"><Icon name="check" />Verified{props.verifiedBy ? ` by ${props.verifiedBy}` : ''}</span>;
   else if (source === 'edited') meta = <span className="cl-field-tag cl-tone-pine"><Icon name="check" />Corrected{props.verifiedBy ? ` by ${props.verifiedBy}` : ''}</span>;
   else
     meta = (
       <span className={cx('cl-field-tag', low ? 'cl-tone-attention' : 'cl-tone-agent')}>
         <Icon name="spark" />
-        {source === 'caregiver' ? 'From SMS reply' : source === 'imported' ? 'From wallet · confirm' : 'AI'}
+        {source === 'caregiver' ? 'From caregiver' : source === 'imported' ? 'From wallet · confirm' : 'AI'}
         {typeof props.confidence === 'number' ? ` · ${Math.round(props.confidence * 100)}%` : ''}
         {low ? ' · check this' : ''}
       </span>
@@ -105,18 +107,22 @@ export function ApprovalBar(props: { unverified?: number; note?: string; /** a r
     <div className="cl-approval" role="region" aria-label="Approval">
       <div className="cl-approval-text">
         <strong>{n > 0 ? `Verify ${n} field${n > 1 ? 's' : ''} to approve` : held ? 'Approval is on hold' : 'Ready for your approval'}</strong>
-        <span className="cl-muted cl-small">{props.note || (n === 0 && props.blocker) || 'CareLoop never approves a record on its own.'}</span>
+        <span className="cl-muted cl-small">{props.note || (n === 0 && props.blocker) || 'PaperEase never approves a record on its own.'}</span>
       </div>
       <div className="cl-approval-actions">
         <Button variant="quiet" onClick={props.onReject} disabled={props.busy}>Reject</Button>
-        <Button variant="secondary" icon="loop" onClick={props.onRequest} disabled={props.busy}>Request another document</Button>
+        {props.onRequest && <Button variant="secondary" icon="loop" onClick={props.onRequest} disabled={props.busy}>Request another document</Button>}
         <Button variant="primary" icon="check" disabled={n > 0 || held || props.busy} onClick={props.onApprove}>Approve record</Button>
       </div>
     </div>
   );
 }
 
-export interface SmsBubble { id: string; from: 'agent' | 'admin' | 'caregiver'; text?: string; time?: string; attachment?: { name: string; url: string; mime: string } }
+export interface SmsBubble { id: string; from: 'agent' | 'admin' | 'caregiver'; text?: string; time?: string; attachment?: { name: string; url: string; mime: string }; photoCheck?: PhotoCheck }
+
+// upload links in agent texts open the caregiver's page
+const linkify = (text: string) =>
+  text.split(/(https?:\/\/\S+)/).map((part, i) => (i % 2 ? <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a> : part));
 
 export function SmsThread({ contact, number, messages, footer, bodyRef }: { contact?: string; number?: string; messages: SmsBubble[]; footer?: React.ReactNode; bodyRef?: React.Ref<HTMLDivElement> }) {
   return (
@@ -132,7 +138,7 @@ export function SmsThread({ contact, number, messages, footer, bodyRef }: { cont
         {messages.map((m) => {
           const mine = m.from !== 'caregiver';
           return (
-            <div key={m.id} className={cx('cl-sms-row', mine ? 'cl-sms-out' : 'cl-sms-in')}>
+            <div key={m.id} className={cx('cl-sms-row', mine ? 'cl-sms-out' : 'cl-sms-in', !!m.photoCheck && 'cl-sms-photo-result')}>
               {m.attachment &&
                 (m.attachment.mime.startsWith('image/') ? (
                   <a href={m.attachment.url} target="_blank" rel="noreferrer" className="sms-photo">
@@ -145,9 +151,10 @@ export function SmsThread({ contact, number, messages, footer, bodyRef }: { cont
                     <span>{m.attachment.name}</span>
                   </a>
                 ))}
-              {m.text && <div className={cx('cl-sms-bubble', m.from === 'admin' && 'cl-sms-admin')}>{m.text}</div>}
+              {m.text && <div className={cx('cl-sms-bubble', m.from === 'admin' && 'cl-sms-admin')}>{linkify(m.text)}</div>}
+              {m.photoCheck && <PhotoCheckCard check={m.photoCheck} />}
               <div className="cl-sms-meta cl-data">
-                {m.from === 'agent' ? 'CareLoop agent' : m.from === 'admin' ? 'Agency staff' : 'Caregiver'}
+                {m.from === 'agent' ? 'PaperEase agent' : m.from === 'admin' ? 'Agency staff' : 'Caregiver'}
                 {m.time ? ` · ${m.time}` : ''}
               </div>
             </div>
@@ -159,7 +166,7 @@ export function SmsThread({ contact, number, messages, footer, bodyRef }: { cont
   );
 }
 
-const ACTOR = { agent: 'CareLoop agent', admin: 'Admin', caregiver: 'Caregiver', system: 'System' } as const;
+const ACTOR = { agent: 'PaperEase agent', admin: 'Admin', caregiver: 'Caregiver', system: 'System' } as const;
 export function AuditTrail({ events }: { events: { id: string; actor: keyof typeof ACTOR; who?: string; action: string; detail?: React.ReactNode; time: string }[] }) {
   if (!events.length) return <p className="cl-muted cl-small">Nothing recorded yet.</p>;
   return (

@@ -6,7 +6,7 @@ import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { SmsError, isTwilioMediaUrl, sendSms, smsStatus, twilioSignature, validTwilioSignature, webhookUrl } from '../lib/sms';
 
 const TOKEN = 'tok_' + 'a'.repeat(28);
-const ENV = { TWILIO_ACCOUNT_SID: 'ACtest', TWILIO_AUTH_TOKEN: TOKEN, TWILIO_FROM: '+15005550006', SMS_LIVE: 'true', CARELOOP_AUTH: 'required', PUBLIC_BASE_URL: 'https://app.example.com' };
+const ENV = { TWILIO_ACCOUNT_SID: 'ACtest', TWILIO_AUTH_TOKEN: TOKEN, TWILIO_FROM: '+15005550006', SMS_LIVE: 'true', SUPABASE_URL: 'https://example.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'pk_test', PUBLIC_BASE_URL: 'https://app.example.com' };
 
 describe('twilio signature', () => {
   it('matches the worked example in Twilio\'s documentation', () => {
@@ -33,7 +33,7 @@ describe('sending', () => {
   it('stays simulated unless every safeguard is on', () => {
     assert.equal(smsStatus({} as any).mode, 'simulated');
     assert.equal(smsStatus({ ...ENV, SMS_LIVE: undefined } as any).mode, 'simulated');
-    assert.match(smsStatus({ ...ENV, CARELOOP_AUTH: undefined } as any).reason!, /CARELOOP_AUTH/);
+    assert.match(smsStatus({ ...ENV, SUPABASE_PUBLISHABLE_KEY: undefined } as any).reason!, /sign-in/);
     assert.equal(smsStatus(ENV as any).mode, 'live');
   });
   it('posts the right form with basic auth and normalizes the number', async () => {
@@ -73,10 +73,10 @@ describe('end to end with a stubbed Twilio', () => {
   let mediaBytes: Buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
   before(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'careloop-sms-'));
-    for (const k of [...Object.keys(ENV), 'CARELOOP_DATA_DIR', 'SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'ANTHROPIC_API_KEY']) saved[k] = process.env[k];
-    Object.assign(process.env, ENV, { CARELOOP_DATA_DIR: dir });
-    delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SECRET_KEY; delete process.env.ANTHROPIC_API_KEY;
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'paperease-sms-'));
+    for (const k of [...Object.keys(ENV), 'PAPEREASE_DATA_DIR', 'SUPABASE_SECRET_KEY', 'ANTHROPIC_API_KEY']) saved[k] = process.env[k];
+    Object.assign(process.env, ENV, { PAPEREASE_DATA_DIR: dir });
+    delete process.env.SUPABASE_SECRET_KEY; delete process.env.ANTHROPIC_API_KEY; // URL + publishable key stay: they are the sign-in switch; no secret key keeps the JSON store
     ({ run } = await import('../lib/agent'));
     inbound = await import('../app/api/sms/inbound/route');
     status = await import('../app/api/sms/status/route');
