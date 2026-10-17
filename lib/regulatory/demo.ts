@@ -119,6 +119,12 @@ export async function resetDemo(ctx: Context) {
     },
     rule,
   );
+  const agencyRule: Candidate = { ...rule, id: "rule:guided-demo:agency-v1", previousId: undefined, title: "Demo: company insurance certificate", subject: "agency", action: "document", topic: "agency-license", roles: [], obligation: "SIMULATED COMPANY POLICY: provide a company insurance certificate with the company name and expiration date. This is not a verified law.", quote: "SIMULATED COMPANY POLICY: provide a company insurance certificate with the company name and expiration date. This is not a verified law." };
+  corpus.candidates.push(agencyRule);
+  a.evidenceContracts = {
+    [rule.id]: { id: rule.id, name: rule.title, rule: `${rule.citation}: ${rule.obligation}`, subject: "worker", ruleVersionId: rule.id, contractConfirmed: true, ask: "Your safety training certificate", smsCollectible: false, validMonths: null, minHours: 5, expirationField: "expiration_date", fields: [{ key: "name", label: "Worker name", required: true, kind: "text" }, { key: "hours", label: "Training hours", required: true, kind: "number" }, { key: "completion_date", label: "Training date", required: true, kind: "date" }, { key: "expiration_date", label: "Expiration date", required: true, kind: "date" }] },
+    [agencyRule.id]: { id: agencyRule.id, name: agencyRule.title, rule: `${agencyRule.citation}: ${agencyRule.obligation}`, subject: "agency", ruleVersionId: agencyRule.id, contractConfirmed: true, ask: "Your company insurance certificate", smsCollectible: false, validMonths: null, expirationField: "expiration_date", fields: [{ key: "name", label: "Company name", required: true, kind: "text" }, { key: "expiration_date", label: "Expiration date", required: true, kind: "date" }] }
+  };
   a.audit.push({
     at: now,
     actor: "demo",

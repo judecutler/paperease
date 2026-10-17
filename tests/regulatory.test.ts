@@ -31,6 +31,7 @@ import {
   enqueue,
   state,
 } from "../lib/regulatory/service";
+import { reviewEvidence } from "../lib/regulatory/compliance";
 import { resetDemo } from "../lib/regulatory/demo";
 import { collectionAction, syncCollection } from "../lib/regulatory/collection";
 let dir: string;
@@ -362,6 +363,7 @@ test("review, stale-preview guard, adoption and versioned document flow work end
     { name: "synthetic.txt", mime: "text/plain", bytes: "" },
     0,
   );
+  await reviewEvidence(ctx, { type: "contract", requirementId: "rule:test", ask: "Training certificate", fields: [{ key: "name", label: "Name", kind: "text", required: true }] });
   await collectionAction(ctx, {
     type: "evidence-submit",
     caregiverId: "worker",
@@ -378,9 +380,10 @@ test("review, stale-preview guard, adoption and versioned document flow work end
   );
   for (const f of sub.fields)
     await collectionAction(ctx, {
-      type: "verify-field",
+      type: "edit-field",
       submissionId: sub.id,
       key: f.key,
+      value: "Test Worker",
     });
   await collectionAction(ctx, { type: "approve", submissionId: sub.id });
   assert.equal(
@@ -398,7 +401,7 @@ test("guided demo is isolated, repeatable and cannot be initialized in a live wo
   await resetDemo(demoCtx);
   const data = await state(demoCtx);
   assert.equal(data.agency.workers.length, 1);
-  assert.equal(data.candidates.filter((r) => r.demo).length, 2);
+  assert.equal(data.candidates.filter((r) => r.demo).length, 3);
   assert.equal(
     data.candidates.find((r) => r.effectiveTo === null)?.impact[0].result,
     "applicable",

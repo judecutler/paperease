@@ -324,3 +324,20 @@ blockquote {
     padding: 16px;
   }
 }
+
+.compliance-page { max-width: 1100px; }
+.compliance-page section { margin: 28px 0; }
+.compliance-item { margin-bottom: 18px; padding: 24px; }
+.compliance-item .reg-form { margin: 18px 0; max-width: 640px; }
+.compliance-item .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.compliance-review { padding: 20px; background: #f4f6f1; border-radius: 8px; }
+.compliance-fixtures { margin-top: 20px; border-top: 1px solid #ddd; padding-top: 14px; }
+.compliance-page summary { cursor: pointer; padding: 10px 0; }
+.compliance-page input[type=file] { max-width: 100%; }
+@media (max-width: 640px) {
+  .compliance-page .card-head { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+  .compliance-page .page-head { flex-wrap: wrap; }
+  .compliance-item { padding: 18px; }
+  .compliance-page .cl-btn { min-height: 44px; white-space: normal; }
+  .compliance-page .reg-stats { grid-template-columns: 1fr; }
+}

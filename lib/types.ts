@@ -17,6 +17,9 @@ export interface FieldSpec {
 }
 
 export interface RequirementType {
+  subject?: "agency" | "worker";
+  contractConfirmed?: boolean;
+  expirationField?: string;
   ruleVersionId?: string;
   id: string;
   name: string;
@@ -79,6 +82,10 @@ export interface SubmissionFile {
 }
 
 export interface Submission {
+  ruleVersionId?: string;
+  analysis?: PhotoCheck;
+  reviewedBy?: string;
+  reviewedAt?: string;
   id: string;
   caregiverId: string;
   requirementId: string;
@@ -123,6 +130,9 @@ export interface RegistryCheck {
 }
 
 export interface RequirementState {
+  subject?: "agency" | "worker";
+  inactive?: boolean;
+  reevaluationRequired?: boolean;
   caregiverId: string;
   requirementId: string;
   status: DocStatus;

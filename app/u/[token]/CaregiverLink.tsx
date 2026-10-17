@@ -31,31 +31,7 @@ const T = {
     privacy: 'Only send the document we asked for. We never ask for your Social Security number by text.',
     placeholder: { text: '', date: 'e.g. 10/05/2026', number: 'e.g. 5' },
   },
-  es: {
-    needs: 'Lo que necesitamos',
-    hi: (name: string) => `¡Hola ${name}!`,
-    how: 'Toma una foto clara de toda la página, con las cuatro esquinas visibles.',
-    camera: 'Tomar una foto',
-    file: 'Elegir un archivo',
-    send: 'Enviar',
-    another: 'Elegir otro',
-    sending: 'Enviando. Leer tu documento puede tardar hasta un minuto.',
-    missing: (field: string) => `No encontramos ${field} en tu documento.`,
-    answerLabel: (field: string) => `Escribe ${field}`,
-    orPhoto: 'O envía una foto que lo muestre',
-    received: (name: string) => `¡Gracias, ${name}! Lo recibimos.`,
-    receivedBody: 'La oficina lo revisará. No necesitas hacer nada más.',
-    office: (name: string) => `¡Gracias, ${name}!`,
-    officeBody: (agency: string) => `Alguien de ${agency} te contactará sobre el siguiente paso.`,
-    approved: 'Tu documento fue aprobado.',
-    approvedBody: 'No necesitas hacer nada más. ¡Gracias!',
-    closed: 'Esta solicitud está cerrada.',
-    closedBody: (agency: string) => `Si recibiste un mensaje más reciente de ${agency}, usa el enlace de ese mensaje.`,
-    expired: 'Este enlace ya venció.',
-    expiredBody: 'Responde al mensaje de tu agencia y te enviarán uno nuevo.',
-    privacy: 'Envía solo el documento que pedimos. Nunca pedimos tu número de Seguro Social por mensaje.',
-    placeholder: { text: '', date: 'p. ej. 10/05/2026', number: 'p. ej. 5' },
-  },
+
 };
 
 export function CaregiverLink({ token }: { token: string }) {
@@ -83,7 +59,7 @@ export function CaregiverLink({ token }: { token: string }) {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  const t = T[view?.language ?? 'en'];
+  const t = T.en;
 
   const submit = async (body: FormData) => {
     setSending(true);

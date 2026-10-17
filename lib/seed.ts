@@ -87,10 +87,10 @@ const date = (offsetDays: number) => iso(offsetDays).slice(0, 10);
 const CAREGIVERS: Caregiver[] = [
   { id: 'maria', name: 'Maria Lopez', firstName: 'Maria', phone: '(213) 555-0142', language: 'en', hiredOn: date(-760), smsConsent: true },
   { id: 'james', name: 'James Chen', firstName: 'James', phone: '(626) 555-0177', language: 'en', hiredOn: date(-700), smsConsent: true },
-  { id: 'ana', name: 'Ana Reyes', firstName: 'Ana', phone: '(323) 555-0119', language: 'es', hiredOn: date(-420), smsConsent: true },
+  { id: 'ana', name: 'Ana Reyes', firstName: 'Ana', phone: '(323) 555-0119', language: 'en', hiredOn: date(-420), smsConsent: true },
   { id: 'david', name: 'David Kim', firstName: 'David', phone: '(818) 555-0163', language: 'en', hiredOn: date(-500), smsConsent: true },
   { id: 'grace', name: 'Grace Okafor', firstName: 'Grace', phone: '(510) 555-0108', language: 'en', hiredOn: date(-900), smsConsent: true },
-  { id: 'luis', name: 'Luis Hernández', firstName: 'Luis', phone: '(909) 555-0131', language: 'es', hiredOn: date(-30), smsConsent: true },
+  { id: 'luis', name: 'Luis Hernández', firstName: 'Luis', phone: '(909) 555-0131', language: 'en', hiredOn: date(-30), smsConsent: true },
 ];
 
 function approved(caregiverId: string, requirementId: string, expiresIn?: number): RequirementState {
@@ -145,7 +145,7 @@ export function seedDb(): Db {
   // James: TB screening runs out soon.
   set('james', { tb_test: { expiresOn: date(18) } });
 
-  // Ana: agent already asked for annual training, in Spanish.
+  // Ana: agent already asked for annual training, in English.
   const anaSub = id('sub');
   set('ana', {
     annual_training: {
@@ -160,13 +160,13 @@ export function seedDb(): Db {
     id: id('msg'),
     caregiverId: 'ana',
     from: 'agent',
-    text: '¡Hola Ana! Tu agencia necesita tu certificado de capacitación anual. ¿Puedes responder con una foto?',
+    text: 'Hi Ana! Your agency needs your annual training certificate. Could you reply with a photo?',
     time: iso(-1, 10),
   });
   audit.push(
     { id: id('ev'), caregiverId: 'ana', requirementId: 'annual_training', actor: 'system', action: 'flagged annual training as missing', detail: 'Certificate on file expired 3 days ago.', time: iso(-1, 9) },
     { id: id('ev'), caregiverId: 'ana', requirementId: 'annual_training', actor: 'admin', who: 'Dana (Admin)', action: 'authorized outreach', time: iso(-1, 10) },
-    { id: id('ev'), caregiverId: 'ana', requirementId: 'annual_training', actor: 'agent', action: 'sent an SMS request in Spanish', time: iso(-1, 10) },
+    { id: id('ev'), caregiverId: 'ana', requirementId: 'annual_training', actor: 'agent', action: 'sent an SMS request in English', time: iso(-1, 10) },
   );
 
   // David: TB result waiting for review, one low-confidence field.
@@ -242,12 +242,12 @@ export function seedDb(): Db {
     ],
   });
   messages.push(
-    { id: id('msg'), caregiverId: 'luis', from: 'agent', text: '¡Hola Luis! Tu agencia necesita una foto de tu registro de Home Care Aide. ¿Puedes responder con una foto?', time: iso(-1, 16) },
+    { id: id('msg'), caregiverId: 'luis', from: 'agent', text: 'Hi Luis! Your agency needs a photo of your Home Care Aide registration. Could you reply with a photo?', time: iso(-1, 16) },
     { id: id('msg'), caregiverId: 'luis', from: 'caregiver', attachment: { name: 'IMG_2231.png', url: '/samples/hca-blurry.png', mime: 'image/png' }, time: iso(-1, 17) },
-    { id: id('msg'), caregiverId: 'luis', from: 'agent', text: '¡Gracias, Luis! Alguien de la oficina lo revisará.', time: iso(-1, 17) },
+    { id: id('msg'), caregiverId: 'luis', from: 'agent', text: 'Thanks, Luis! Someone from the office will review it.', time: iso(-1, 17) },
   );
   audit.push(
-    { id: id('ev'), caregiverId: 'luis', requirementId: 'hca_registration', actor: 'agent', action: 'sent an SMS request in Spanish', time: iso(-1, 16) },
+    { id: id('ev'), caregiverId: 'luis', requirementId: 'hca_registration', actor: 'agent', action: 'sent an SMS request in English', time: iso(-1, 16) },
     { id: id('ev'), caregiverId: 'luis', requirementId: 'hca_registration', actor: 'caregiver', who: 'Luis Hernández', action: 'replied with a photo', detail: 'IMG_2231.png', time: iso(-1, 17) },
     { id: id('ev'), caregiverId: 'luis', requirementId: 'hca_registration', actor: 'agent', action: 'escalated to an admin', detail: 'Photo too blurry to read (31% confidence).', time: iso(-1, 17) },
   );

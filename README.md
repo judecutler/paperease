@@ -11,7 +11,7 @@ Built as a hackathon MVP. The full flow runs end to end with no API keys and no 
 ## Features
 
 - **Gap detection:** checks every caregiver against the requirement checklist and flags documents that are missing or expiring.
-- **SMS outreach:** the agent requests documents in the caregiver's language (English or Spanish) and sends reminders.
+- **SMS outreach:** the agent requests documents in English and sends reminders.
 - **Caregiver upload link:** every request text carries a secure link to a phone-friendly page. Caregivers see what is needed, take a photo and answer the agent's question there, with no app or login. What they send fills in the agency's record the same way an SMS reply does.
 - **AI extraction:** reads the photo the caregiver sends and fills in each field with a confidence score and a pointer to where on the document it was found.
 - **Photo checks in messages:** shows each attachment's preliminary result and next step, with a detailed checklist available in the conversation.
@@ -24,6 +24,10 @@ Built as a hackathon MVP. The full flow runs end to end with no API keys and no 
 <img src="docs/caregiver-link.png" alt="The caregiver's upload page asking for missing training hours" width="320">
 
 ![Reviewing a record](docs/maria-review.png)
+
+## Unified company and worker demo
+
+The new document workflow starts at `/regulatory`, with a private worker space at `/regulatory/worker` and Regulatory watch at `/regulatory/watch`. See [the demo guide](docs/unified-demo.md) for the isolated scenario, setup, validation and limitations.
 
 ## Quick start
 
@@ -54,7 +58,7 @@ Other cases to try:
 | Reply `I did 3 hours` | Escalated for falling short of the 5-hour minimum |
 | Send a TB result instead of a training certificate | The agent asks for the right document |
 | Reply `STOP` | The caregiver is opted out and open requests go to staff |
-| Open Ana or Luis | The conversation is in Spanish |
+| Open Ana or Luis | The conversation is in English |
 
 ## Configuration
 
@@ -79,7 +83,7 @@ Each AI feature falls back to deterministic behavior when no key is set or a cal
 | Feature | With keys | Without keys |
 | --- | --- | --- |
 | Document extraction | Claude vision with structured output reads sample and uploaded photos | Preset results for each sample document. Your own uploads are escalated for a person to read |
-| SMS copy | Claude, based on templates | English and Spanish templates |
+| SMS copy | Claude, based on templates | English templates |
 | Follow-up questions | RunAnywhere if configured, otherwise Claude | Templates |
 | Reply interpretation | Claude | Number and date rules |
 

@@ -1,3 +1,4 @@
+import { demoEvidence, complianceView, submitEvidence, reviewEvidence, workerFile, adminContext } from "@/lib/regulatory/compliance";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -99,7 +100,28 @@ async function dispatch(
         await acknowledgeWorkerNotice(await workerContext(req), body.id),
       );
     }
+    if (path === "worker-compliance" && req.method === "GET") {
+      const worker = await workerContext(req);
+      return NextResponse.json(await complianceView(adminContext(worker), worker.workerId));
+    }
+    if (path === "worker-demo-evidence" && req.method === "POST") {
+      const worker = await workerContext(req);
+      const body = await req.json();
+      return NextResponse.json(await demoEvidence(adminContext(worker), { ...body, caregiverId: worker.workerId }, worker.workerId));
+    }
+    if (path === "worker-submit" && req.method === "POST") {
+      const worker = await workerContext(req);
+      return NextResponse.json(await submitEvidence(adminContext(worker), (await req.formData()) as unknown as FormData, worker.workerId));
+    }
+    if (path.startsWith("worker-files/") && req.method === "GET") {
+      const file = await workerFile(await workerContext(req), path.slice(13));
+      return new Response(Buffer.from(file.bytes, "base64"), { headers: { "content-type": file.mime, "content-disposition": 'attachment; filename="evidence"', "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+    }
     const ctx = await context(req, req.method === "POST");
+    if (path === "demo-evidence" && req.method === "POST") return NextResponse.json(await demoEvidence(ctx, await req.json()));
+    if (path === "compliance" && req.method === "GET") return NextResponse.json(await complianceView(ctx));
+    if (path === "submit" && req.method === "POST") return NextResponse.json(await submitEvidence(ctx, (await req.formData()) as unknown as FormData));
+    if (path === "review" && req.method === "POST") return NextResponse.json(await reviewEvidence(ctx, await req.json()));
     if (path === "alerts" && req.method === "GET") {
       await syncAlerts(ctx.agencyId);
       const a = (await readDoc(agencyKey(ctx.agencyId), emptyAgency)).data;
