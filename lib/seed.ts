@@ -206,8 +206,37 @@ export function seedDb(): Db {
     { id: id('ev'), caregiverId: 'david', requirementId: 'tb_test', actor: 'agent', action: 'extracted 4 fields', detail: 'Result read at 72% confidence (handwritten). Sent to review.', time: iso(0, 8) },
   );
 
-  // Grace: complete.
+  // Grace: complete, with a full audit-ready file: every SMS-collected record has its original, fields a person confirmed,
+  // and the registration passed the registry check. Background check is kept by staff outside CareLoop.
   set('grace', {});
+  {
+    const who = 'Dana';
+    const doneAt = (offset: number) => iso(offset, 10);
+    const rec = (reqId: string, file: string | null, offset: number, values: Record<string, string>, extra: Partial<Submission> = {}) => {
+      const req = REQUIREMENTS.find((r) => r.id === reqId)!;
+      const subId = id('sub');
+      subs.push({
+        id: subId, caregiverId: 'grace', requirementId: reqId, files: file ? [{ name: file, url: `/samples/${file}`, mime: 'image/png' }] : [], extractedBy: 'sample', createdAt: doneAt(offset), state: 'approved', followUps: 0,
+        fields: req.fields.map((f) => ({ key: f.key, label: f.label, required: f.required, value: values[f.key] ?? null, source: 'verified' as const, verifiedBy: who, ...(file ? { sourceRef: `${file} · p.1` } : { sourceRef: 'Live Scan clearance letter, kept by the agency' }) })),
+        ...extra,
+      });
+      reqs.find((x) => x.caregiverId === 'grace' && x.requirementId === reqId)!.approvedSubmissionId = subId;
+      audit.push(
+        ...(file ? [{ id: id('ev'), caregiverId: 'grace', requirementId: reqId, actor: 'caregiver' as const, who: 'Grace Okafor', action: 'replied with a photo', detail: file, time: doneAt(offset) }] : []),
+        { id: id('ev'), caregiverId: 'grace', requirementId: reqId, actor: 'admin', who: 'Dana (Admin)', action: 'verified every field', detail: `${req.fields.length} fields`, time: doneAt(offset) },
+        { id: id('ev'), caregiverId: 'grace', requirementId: reqId, actor: 'admin', who: 'Dana (Admin)', action: 'approved the record', time: doneAt(offset) },
+      );
+    };
+    const reg = { outcome: 'found' as const, status: 'REGISTERED' as const, by: 'demo' as const, checkedAt: doneAt(-330), searchedName: 'Grace Okafor', perIdMasked: '…1005' };
+    rec('hca_registration', 'hca-card-grace.png', -330, { name: 'Grace Okafor', registration_number: 'HCA DEMO1005', expiration_date: date(410) }, { registryCheck: reg });
+    rec('tb_test', 'tb-result-grace.png', -350, { name: 'Grace Okafor', test_date: date(-350), result: 'Negative', provider: 'Lakeside Family Clinic' });
+    rec('initial_training', 'training-cert-grace.png', -880, { name: 'Grace Okafor', course: 'Home Care Aide Entry-Level Training', completion_date: date(-880), hours: '6', issuer: 'Golden State Caregiver Academy' });
+    rec('annual_training', 'annual-training-grace.png', -30, { name: 'Grace Okafor', course: 'Annual Home Care Aide Training', completion_date: date(-30), hours: '5', issuer: 'CareSkills Online' });
+    rec('background_check', null, -890, { name: 'Grace Okafor', clearance_date: date(-890) });
+    // approved annual training lasts 12 months from completion
+    reqs.find((x) => x.caregiverId === 'grace' && x.requirementId === 'annual_training')!.expiresOn = date(335);
+    reqs.find((x) => x.caregiverId === 'grace' && x.requirementId === 'tb_test')!.expiresOn = date(380);
+  }
 
   // Luis: new hire. HCA photo unreadable (escalated), entry-level training missing.
   const luisSub = id('sub');

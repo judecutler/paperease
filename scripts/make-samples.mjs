@@ -71,11 +71,18 @@ const pages = {
   </div>
 </div>`,
 };
+// Grace Okafor: a complete, audit-ready personnel file for the demo (see seedDb)
+pages['hca-card-grace.png'] = pages['hca-card-luis.png'].replace('Luis Hernández', 'Grace Okafor').replace('HCA 4417-2290', 'HCA DEMO1005');
+pages['tb-result-grace.png'] = pages['tb-result-james.png'].replace('Pasadena Family Clinic', 'Lakeside Family Clinic').replace('James Chen', 'Grace Okafor');
+pages['training-cert-grace.png'] = cert({ org: 'Golden State Caregiver Academy', title: 'Certificate of Completion', name: 'Grace Okafor', course: 'Home Care Aide Entry-Level Training', date: d(-880), extra: '<div style="font-size:18px;margin-top:8px">Total instruction: <b>6.0 hours</b></div>' });
+pages['annual-training-grace.png'] = cert({ org: 'CareSkills Online', title: 'Certificate of Completion', name: 'Grace Okafor', course: 'Annual Home Care Aide Training', date: d(-30), extra: '<div style="font-size:18px;margin-top:8px">Total instruction: <b>5.0 hours</b></div>', seal: '#2a52b5' });
 pages['hca-blurry.png'] = `<div style="filter:blur(7px) brightness(1.05);transform:rotate(-7deg) scale(1.08)">${pages['hca-card-luis.png']}</div>`;
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
 const page = await browser.newPage({ viewport: { width: 900, height: 620 } });
+// ONLY=grace re-renders just the files whose name contains it, so the other demo images stay byte-identical
 for (const [file, html] of Object.entries(pages)) {
+  if (process.env.ONLY && !file.includes(process.env.ONLY)) continue;
   await page.setContent(`<html><body style="margin:0;background:#ddd">${html}</body></html>`);
   await page.screenshot({ path: path.join(out, file), clip: { x: 0, y: 0, width: 900, height: file.startsWith('hca') ? 560 : 620 } });
   console.log('wrote', file);

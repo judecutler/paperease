@@ -33,15 +33,15 @@ describe('wallet primitives', () => {
   });
   it('snapshot includes only approved, confirmed, unexpired, non-staff records and no photos', () => {
     const db = seedDb();
-    approve(db, 'grace', 'tb_test', { name: 'Grace Okafor', test_date: day(-30), result: 'Negative' });
-    approve(db, 'grace', 'background_check', { name: 'Grace Okafor', clearance_date: day(-300) });
-    const unconfirmed = approve(db, 'grace', 'annual_training', { name: 'Grace Okafor' });
+    approve(db, 'james', 'tb_test', { name: 'Grace Okafor', test_date: day(-30), result: 'Negative' });
+    approve(db, 'james', 'background_check', { name: 'Grace Okafor', clearance_date: day(-300) });
+    const unconfirmed = approve(db, 'james', 'annual_training', { name: 'Grace Okafor' });
     unconfirmed.fields[0].source = 'ai';
-    const snap = snapshotCredentials(db, 'grace');
+    const snap = snapshotCredentials(db, 'james');
     assert.deepEqual(snap.map((s) => s.requirementId), ['tb_test']);
     assert.ok(!JSON.stringify(snap).includes('p.png'));
-    db.requirements.find((s) => s.caregiverId === 'grace' && s.requirementId === 'tb_test')!.expiresOn = day(-1);
-    assert.equal(snapshotCredentials(db, 'grace').length, 0);
+    db.requirements.find((s) => s.caregiverId === 'james' && s.requirementId === 'tb_test')!.expiresOn = day(-1);
+    assert.equal(snapshotCredentials(db, 'james').length, 0);
   });
   it('another agency sees the newest unexpired record; the publisher does not see its own', () => {
     const doc = emptyWallet();
@@ -136,17 +136,17 @@ describe('wallet through the agent (two agencies)', () => {
 
   it('sharing needs a YES, then publishes confirmed values only; STOP takes them back out', async () => {
     let db = await load();
-    const grace = db.caregivers.find((c) => c.id === 'grace')!;
-    approve(db, 'grace', 'tb_test', { name: 'Grace Okafor', test_date: day(-30), result: 'Negative' });
+    const grace = db.caregivers.find((c) => c.id === 'james')!;
+    approve(db, 'james', 'tb_test', { name: 'Grace Okafor', test_date: day(-30), result: 'Negative' });
     await save(db);
-    db = await run({ type: 'wallet-offer-share', caregiverId: 'grace' });
+    db = await run({ type: 'wallet-offer-share', caregiverId: 'james' });
     assert.equal(Object.keys(((await readDoc<any>('wallet')).holders)).includes(holderKey(grace.phone)), false, 'nothing published before YES');
-    db = await run({ type: 'caregiver-reply', caregiverId: 'grace', text: 'YES' });
+    db = await run({ type: 'caregiver-reply', caregiverId: 'james', text: 'YES' });
     let w = (await readDoc<any>('wallet'))!;
     const creds = w.holders[holderKey(grace.phone)].credentials;
     assert.deepEqual(creds.map((c: any) => c.requirementId), ['tb_test']);
-    assert.ok(!JSON.stringify(w).includes('p.png') && !JSON.stringify(w).includes('555-0108'), 'no files and no phone number in the wallet');
-    db = await run({ type: 'caregiver-reply', caregiverId: 'grace', text: 'STOP' });
+    assert.ok(!JSON.stringify(w).includes('p.png') && !JSON.stringify(w).includes('555-0177'), 'no files and no phone number in the wallet');
+    db = await run({ type: 'caregiver-reply', caregiverId: 'james', text: 'STOP' });
     w = (await readDoc<any>('wallet'))!;
     assert.equal(w.holders[holderKey(grace.phone)].credentials.length, 0);
     assert.ok(db.audit.some((e) => e.action === 'removed records from the credential wallet'));

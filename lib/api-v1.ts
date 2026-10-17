@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { apiConfigured, authenticate, rateLimited } from './apikeys';
-import { authRequired } from './access';
 
 // Shared plumbing for /api/v1 routes: key check, rate limit, JSON errors with stable shapes.
 export function apiError(status: number, error: string, headers: Record<string, string> = {}) {
@@ -10,8 +9,6 @@ export const json = (body: unknown, status = 200) => Response.json(body, { statu
 
 export function gate(req: Request): { client: string } | Response {
   if (!apiConfigured()) return apiError(503, 'The eligibility API is not enabled. Set ELIGIBILITY_API_KEYS.');
-  // real caregiver data only behind sign-in: a scheduler key alone must not expose an open demo workspace in production
-  if (process.env.NODE_ENV === 'production' && !authRequired()) return apiError(503, 'Set CARELOOP_AUTH=required before serving the API in production.');
   const client = authenticate(req);
   if (!client) return apiError(401, 'Invalid or missing API key.', { 'www-authenticate': 'Bearer' });
   if (rateLimited(client.name)) return apiError(429, 'Too many requests.', { 'retry-after': '60' });

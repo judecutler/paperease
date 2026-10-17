@@ -15,7 +15,8 @@ describe('checkEligibility', () => {
     const d = checkEligibility(seedDb(), { caregiverId: 'grace', shiftStart: day(1) });
     assert.equal(d.decision, 'eligible', JSON.stringify(d.reasons));
     assert.ok(d.validThrough);
-    assert.equal(d.evidence.tb_test, 'status-only');
+    assert.equal(d.evidence.tb_test, 'verified-record');
+    assert.equal(checkEligibility(seedDb(), { caregiverId: 'james', shiftStart: day(1) }).evidence.tb_test, 'status-only');
   });
   it('a caregiver with a missing requirement is ineligible, with the reason', () => {
     const d = checkEligibility(seedDb(), { caregiverId: 'maria', shiftStart: day(1) });
@@ -44,7 +45,7 @@ describe('checkEligibility', () => {
     db.submissions.push({ id: 's1', caregiverId: 'grace', requirementId: 'hca_registration', files: [], extractedBy: 'claude', createdAt: new Date().toISOString(), state: 'approved', followUps: 0, fields: [{ key: 'registration_number', label: 'n', value: 'HCA 4417-2290', required: true, source: 'verified' }] });
     db.requirements.find((s) => s.caregiverId === 'grace' && s.requirementId === 'hca_registration')!.approvedSubmissionId = 's1';
     assert.equal(checkEligibility(db, { caregiverId: 'grace', shiftStart: day(1) }).reasons[0].code, 'registry-unchecked');
-    const strict = checkEligibility(seedDb(), { caregiverId: 'grace', shiftStart: day(1) }, { strict: true });
+    const strict = checkEligibility(seedDb(), { caregiverId: 'james', shiftStart: day(1) }, { strict: true });
     assert.equal(strict.eligible, false);
     assert.ok(strict.reasons.every((r) => r.code === 'unverified-record'));
   });

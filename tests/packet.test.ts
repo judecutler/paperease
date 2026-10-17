@@ -20,9 +20,17 @@ function withApproved(db: Db, caregiverId: string, requirementId: string, over: 
   return sub;
 }
 
+test('the demo caregiver Grace has a complete, audit-ready file', () => {
+  const p = buildPacket(seedDb(), 'grace', asOf);
+  assert.deepEqual(p.blockers, []);
+  assert.equal(p.readiness.score, 100);
+  assert.equal(p.items.find((i) => i.requirementId === 'hca_registration')!.registry?.verdict, 'pass');
+  assert.ok(p.items.filter((i) => !i.collectedByStaff).every((i) => i.files.length === 1));
+});
+
 test('a seeded "approved" item with no record behind it is not audit ready', () => {
   const db = seedDb();
-  const p = buildPacket(db, 'grace', asOf);
+  const p = buildPacket(db, 'james', asOf);
   assert.equal(p.readiness.auditReady, false);
   assert.ok(p.items.some((i) => i.issues.some((x) => x.code === 'no-record')));
 });
