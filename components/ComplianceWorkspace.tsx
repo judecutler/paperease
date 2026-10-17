@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Button, ExtractedField } from "./ui";
+import { BrandMark, BrandName } from "./Logo";
 import type { complianceView } from "@/lib/regulatory/compliance";
 import type { Submission } from "@/lib/types";
 import "@/app/regulatory/regulatory.css";
@@ -34,7 +35,7 @@ export function ComplianceWorkspace({ worker = false }: { worker?: boolean }) {
   const items = data?.items || [];
   const documents = [...items.flatMap((i) => i.submissions), ...(data?.history || [])];
   return <>
-    <header className="topbar"><div className="topbar-inner"><a className="brand" href={worker ? "/regulatory/worker" : "/regulatory"}>PaperEase</a><nav className="nav"><a href={worker ? "/regulatory/worker" : "/regulatory"} className="active">{worker ? "Worker home" : "Company home"}</a>{!worker && <a href="/regulatory/watch">Regulatory watch</a>}{data?.local && <a href={worker ? "/regulatory" : "/regulatory/worker"}>{worker ? "Company" : "Demo worker"}</a>}</nav></div></header>
+    <header className="topbar"><div className="topbar-inner"><a className="brand" href={worker ? "/regulatory/worker" : "/regulatory"}><BrandMark /><BrandName /></a><nav className="nav"><a href={worker ? "/regulatory/worker" : "/regulatory"} className="active">{worker ? "Worker home" : "Company home"}</a>{!worker && <a href="/regulatory/watch">Regulatory watch</a>}{data?.local && <a href={worker ? "/regulatory" : "/regulatory/worker"}>{worker ? "Company" : "Demo worker"}</a>}</nav></div></header>
     <main className="page compliance-page">
       <div className="page-head"><div><div className="eyebrow">{worker ? "worker" : "company"}</div><h1>{data ? worker ? `Hello ${data.name.split(" ")[0]}` : data.name : "Your documents and requirements"}</h1><p className="muted">{worker ? "Submit your documents and follow their progress here." : "See what to request, review and approve."}</p></div><Button disabled={busy} onClick={refresh}>Refresh</Button></div>
       {error && <div className="reg-caution" role="alert">{error} <Button disabled={busy} onClick={refresh}>Try again</Button></div>}

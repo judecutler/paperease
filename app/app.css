@@ -13,7 +13,13 @@ input, select, textarea { font: inherit; color: var(--ink); }
 .topbar { position: sticky; top: 0; z-index: 10; background: var(--surface-raised); border-bottom: 1px solid var(--line); }
 .topbar-inner { max-width: 1280px; margin: 0 auto; padding: 0 var(--space-5); height: 60px; display: flex; align-items: center; gap: var(--space-5); }
 .brand { display: inline-flex; align-items: center; gap: var(--space-2); font-family: var(--font-display); font-weight: 700; font-size: 19px; text-decoration: none; color: var(--ink); }
-.brand-mark { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: var(--radius-md); background: var(--pine); color: var(--on-pine); }
+.brand-mark { flex: none; overflow: visible; }
+.brand-name { letter-spacing: -0.01em; }
+.brand-ease { display: inline-block; color: var(--pine); transform: rotate(-7deg) translateY(-1px); transform-origin: 0 100%; margin-left: 1px; }
+/* Logo-only colors (ears, tongue); everything else in the mark uses design tokens. */
+:root { --brand-ear: #3f8a6d; --brand-warm: #f2a541; }
+[data-theme="dark"] { --brand-ear: #3c9474; --brand-warm: #f2b35e; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --brand-ear: #3c9474; --brand-warm: #f2b35e; } }
 .nav { display: flex; gap: var(--space-1); }
 .nav a { padding: 6px var(--space-3); border-radius: var(--radius-md); text-decoration: none; color: var(--ink-muted); font-weight: 700; font-size: 14px; }
 .nav a:hover { background: var(--surface-sunken); color: var(--ink); }
