@@ -124,12 +124,12 @@ With Supabase on, **Reset demo data** resets the Supabase tables. `npm run reset
 ## Validation
 
 ```bash
-npm test
+npm run test:all
 npm run typecheck
 npm run build
 ```
 
-`npm test` runs the 31 photo-check and workflow cases alongside the regulatory tests. Photo coverage includes document routing, missing fields, mismatches, unavailable analysis, manual approval and a mocked Supabase message roundtrip. A shared test preload disables provider and Supabase credentials and sets test mode before every worker starts. The suites use deterministic fixtures and separate temporary data directories; they do not make model calls or change the demo's saved records. The `tsx` dependency runs the tests and database seeding script.
+`npm run test:photo` runs the 31 photo-check and workflow cases; `npm run test:all` also includes the regulatory tests. Photo coverage includes document routing, missing fields, mismatches, unavailable analysis, manual approval and a mocked Supabase message roundtrip. Both commands use a shared preload that disables provider and Supabase credentials and sets test mode before every worker starts. The suites use deterministic fixtures and separate temporary data directories; they do not make model calls or change the demo's saved records. The existing `npm test` command remains available for the regulatory suite. The `tsx` dependency runs the tests and database seeding script.
 
 ## Project structure
 
