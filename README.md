@@ -11,7 +11,7 @@ Built as a hackathon MVP. The full flow runs end to end with no API keys and no 
 ## Features
 
 - **Gap detection:** checks every caregiver against the requirement checklist and flags documents that are missing or expiring.
-- **SMS outreach:** the agent requests documents in the caregiver's language (English or Spanish) and sends reminders.
+- **SMS outreach:** the agent requests documents in the caregiver's language (English, Spanish, Tagalog, Vietnamese or Chinese) and sends reminders. Texts are simulated until Twilio is configured (see below).
 - **Caregiver upload link:** every request text carries a secure link to a phone-friendly page. Caregivers see what is needed, take a photo and answer the agent's question there, with no app or login. What they send fills in the agency's record the same way an SMS reply does.
 - **AI extraction:** reads the photo the caregiver sends and fills in each field with a confidence score and a pointer to where on the document it was found.
 - **Photo checks in messages:** shows each attachment's preliminary result and next step, with a detailed checklist available in the conversation.
@@ -20,6 +20,9 @@ Built as a hackathon MVP. The full flow runs end to end with no API keys and no 
 - **Exception handling:** escalates to a person for blurry photos, name mismatches, too few training hours, wrong documents and opt-outs.
 - **Human approval:** a person verifies or corrects every field before a record can be approved.
 - **Audit trail:** every action by the agent, the admin and the caregiver is logged in order.
+- **Audit-ready personnel files:** one printable file per caregiver with originals, who confirmed each field, the registry result and a readiness score (below).
+- **Compliance gate API:** scheduling software asks whether a caregiver can work a shift (below).
+- **Credential wallet:** with the caregiver's consent, confirmed records pre-fill their file at another agency (below).
 
 <img src="docs/caregiver-link.png" alt="The caregiver's upload page asking for missing training hours" width="320">
 
@@ -83,7 +86,7 @@ Each AI feature falls back to deterministic behavior when no key is set or a cal
 | Follow-up questions | RunAnywhere if configured, otherwise Claude | Templates |
 | Reply interpretation | Claude | Number and date rules |
 
-SMS is simulated. To connect Twilio, send from `Ctx.sms()` in `lib/agent.ts` and route inbound webhooks to the `caregiver-reply` action.
+SMS is simulated unless Twilio is configured; see [Real text messages](#real-text-messages).
 
 ### Admin sign-in
 
@@ -168,6 +171,26 @@ npm run build
 
 `npm run test:photo` runs the 31 photo-check and workflow cases; `npm run test:all` also includes the regulatory tests. Photo coverage includes document routing, missing fields, mismatches, unavailable analysis, manual approval and a mocked Supabase message roundtrip. Both commands use a shared preload that disables provider and Supabase credentials and sets test mode before every worker starts. The suites use deterministic fixtures and separate temporary data directories; they do not make model calls or change the demo's saved records. The existing `npm test` command remains available for the regulatory suite. The `tsx` dependency runs the tests and database seeding script.
 
+## Audit-ready personnel files
+
+California inspects home care organizations without notice. Every caregiver page has a **Personnel file for audit** button, and **Audit readiness** in the menu ranks every caregiver by what would stop their file passing.
+
+A file is audit ready only when, for each requirement, a person approved the record, every field was confirmed by a person, the original is attached (staff-collected items such as the background check are exempt), nothing has expired on the audit date, and, for the Home Care Aide registration, the registry lookup shows an active registration. The score is the share of requirements that meet all of that. The file is one self-contained page: originals embedded with their SHA-256, who confirmed each field, the registry result, version history, the activity log and a fingerprint. Exports are written to the audit trail. Grace Okafor's sample file passes; the other sample caregivers show what a failing file looks like.
+
+## Compliance gate API
+
+Scheduling software calls `POST /api/v1/eligibility` with a caregiver and a shift and gets eligible, ineligible or unknown with reason codes. It is off until `ELIGIBILITY_API_KEYS` is set. See [docs/ELIGIBILITY_API.md](docs/ELIGIBILITY_API.md).
+
+## Credential wallet
+
+Caregivers often work for several agencies. On a caregiver page, **Ask to add records** texts the caregiver; if they reply YES, the values a person already confirmed (never the photos) go to a shared wallet keyed by a hash of their phone number. At another agency, **Check for earlier records** texts them again; on YES their file is pre-filled with the values marked "From wallet", and a person there still confirms each field while the registry is checked again. STOP removes what an agency shared. In the demo, Luis Hernández has a sample record from "Harbor Home Health" waiting: use **Check for earlier records** on his page and reply `SI`. Set `WALLET_PEPPER` outside local development.
+
+## Real text messages
+
+Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` (or `TWILIO_MESSAGING_SERVICE_SID`), `PUBLIC_BASE_URL` and `SMS_LIVE=true`, and turn on admin sign-in (`SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`); without all of them texts stay in the app. In Twilio, point the number's incoming-message webhook at `<PUBLIC_BASE_URL>/api/sms/inbound` and the status callback at `<PUBLIC_BASE_URL>/api/sms/status`. Photos caregivers text are stored and read like any other upload. Languages live in `lib/languages.ts`; Tagalog, Vietnamese and Chinese copy is machine-drafted and flagged until a native speaker reviews it.
+
+Security details and gaps: [docs/SECURITY.md](docs/SECURITY.md).
+
 ## Project structure
 
 | Path | What it does |
@@ -177,6 +200,10 @@ npm run build
 | `lib/photo-check.ts` | Per-attachment checks and preliminary outcomes |
 | `lib/db.ts` | Storage for data (`load()`/`save()`) and uploads (`writeUpload()`/`readUpload()`), in Supabase or local files |
 | `lib/registry.ts`, `lib/registry-providers.ts` | California HCA registry check: status rules, demo and manual providers |
+| `lib/packet.ts`, `lib/packet-files.ts` | Audit-ready personnel file builder, readiness score and printable renderer |
+| `lib/eligibility.ts`, `lib/apikeys.ts`, `lib/api-v1.ts` | Shift eligibility decision, API keys and shared API plumbing (`app/api/v1`) |
+| `lib/wallet.ts` | Credential wallet: consent, publish, import |
+| `lib/sms.ts`, `lib/sms-inbound.ts`, `lib/languages.ts` | Twilio sending, signed webhooks, per-language message copy |
 | `lib/seed.ts` | Requirement checklist and sample data |
 | `app/u/[token]/` | The caregiver's upload page |
 | `lib/links.ts`, `lib/caregiverLink.ts` | Signed upload links and what the caregiver's page shows |
