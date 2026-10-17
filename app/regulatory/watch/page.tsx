@@ -25,7 +25,10 @@ async function api(path: string, body?: unknown, method?: string) {
   if (!res.ok) throw new Error(data.error || "Request failed.");
   return data;
 }
-const label = (s: string) => s.replaceAll("-", " ");
+const label = (s: string) =>
+  s
+    .replaceAll("-", " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 const date = (s?: string | null) =>
   s ? new Date(s).toLocaleString() : "Not established";
 export default function RegulatoryPage() {
@@ -33,7 +36,7 @@ export default function RegulatoryPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [auth, setAuth] = useState(false);
-  const [tab, setTab] = useState("coverage");
+  const [tab, setTab] = useState("changes");
   const [filter, setFilter] = useState("ALL");
   const [message, setMessage] = useState("");
   async function refresh() {
@@ -75,7 +78,6 @@ export default function RegulatoryPage() {
   if (!data)
     return (
       <Shell>
-        <p><a href="/regulatory">Company home</a></p>
       <div className="page-head">
           <div>
             <div className="eyebrow">PaperEase</div>
@@ -89,10 +91,6 @@ export default function RegulatoryPage() {
           </p>
         )}
         {auth && <Login onDone={refresh} />}
-        <p className="muted">
-          This workspace is separate from the original California demonstration.
-          Existing records are preserved.
-        </p>
         {!auth && !error && <p>Loading workspace…</p>}
       </Shell>
     );
@@ -107,7 +105,6 @@ export default function RegulatoryPage() {
   ).length;
   return (
     <Shell error={error || undefined} onDismiss={() => setError("")}>
-      <p><a href="/regulatory">Company home</a></p>
       <div className="page-head">
         <div>
           <div className="eyebrow">
@@ -116,8 +113,8 @@ export default function RegulatoryPage() {
           </div>
           <h1>Regulatory watch</h1>
           <p className="muted">
-            50 states, federal overlays and DC. Coverage is tracked separately
-            from legal review.
+            Monitor official sources and adopt obligations that apply to your
+            agency.
           </p>
         </div>
         <div className="actions">
@@ -144,26 +141,6 @@ export default function RegulatoryPage() {
               Reset guided demo
             </Button>
           )}
-          <Button disabled={busy} onClick={() => act({ type: "scan" })}>
-            Queue due sources
-          </Button>
-          <Button
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const result = await api("process", {});
-                setMessage(`Worker stage: ${result.state || "idle"}`);
-                await refresh();
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Process next stage
-          </Button>
           {!data.local && (
             <Button
               onClick={async () => {
@@ -242,10 +219,10 @@ export default function RegulatoryPage() {
         aria-label="Regulatory workspace"
       >
         {[
-          "notifications",
+          "changes",
           "coverage",
           "sources",
-          "changes",
+          "notifications",
           "onboarding",
           "checklist",
           "operations",
@@ -541,6 +518,29 @@ export default function RegulatoryPage() {
               {data.limits.calls} daily calls · {data.usage.tokens}/
               {data.limits.tokens} tokens reserved or consumed
             </p>
+            <div className="actions">
+              <Button disabled={busy} onClick={() => act({ type: "scan" })}>
+                Queue due sources
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const result = await api("process", {});
+                    setMessage(`Worker stage: ${result.state || "idle"}`);
+                    await refresh();
+                  } catch (e) {
+                    setError((e as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Process next stage
+              </Button>
+              <Button onClick={refresh}>Refresh status</Button>
+            </div>
             <p className="small muted">
               Run the persistent worker with{" "}
               <code>npm run regulatory:worker</code>. A queue action does not
@@ -548,7 +548,6 @@ export default function RegulatoryPage() {
               conservative token reservation. No Anthropic fallback is used by
               regulatory extraction.
             </p>
-            <Button onClick={refresh}>Refresh status</Button>
             <div className="table-wrap">
               <table>
                 <thead>

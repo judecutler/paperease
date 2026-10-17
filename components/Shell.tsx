@@ -9,9 +9,9 @@ import { BrandMark, BrandName } from "./Logo";
 
 const NAV = [
   ["/", "Dashboard"],
+  ["/regulatory/watch", "Regulatory watch"],
   ["/audit", "Audit trail"],
   ["/rules", "Rules"],
-  ["/regulatory", "Company"],
 ] as const;
 
 const signOut = async () => {

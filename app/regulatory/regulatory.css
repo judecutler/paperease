@@ -14,37 +14,45 @@
 }
 .reg-stats span {
   font-size: 13px;
-  color: var(--cl-muted, #666);
+  color: var(--ink-muted);
 }
 .reg-caution {
   padding: 16px;
   border-left: 3px solid #ad8640;
-  background: #faf6ec;
+  background: var(--attention-soft);
+  color: var(--ink);
   font-size: 14px;
   line-height: 1.6;
 }
 .reg-tabs {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
   margin: 24px 0;
 }
 .reg-tabs > button {
-  border: 1px solid #ddd;
-  padding: 10px 14px;
-  border-radius: 5px;
-  background: white;
+  border: 1px solid var(--line);
+  padding: 9px 14px;
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--ink-muted);
   cursor: pointer;
-  text-transform: capitalize;
+  font-weight: 600;
+}
+.reg-tabs > button:hover {
+  border-color: var(--pine);
+  color: var(--pine);
 }
 .reg-tabs > button[aria-selected="true"] {
-  background: #173d35;
-  color: white;
+  background: var(--pine);
+  border-color: var(--pine);
+  color: var(--on-pine);
 }
 .reg-tabs > label {
   margin-left: auto;
   font-size: 13px;
+  color: var(--ink-muted);
 }
 .reg-tabs .input {
   margin-left: 10px;
@@ -56,8 +64,8 @@
   gap: 10px;
 }
 .reg-state {
-  background: #faf9f6;
-  border: 1px solid #deded8;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
   border-radius: 6px;
   text-align: left;
   padding: 14px;
@@ -66,15 +74,18 @@
   gap: 7px;
   cursor: pointer;
 }
+.reg-state:hover {
+  border-color: var(--pine);
+}
 .reg-state span {
   text-transform: capitalize;
 }
 .reg-monitored {
-  border-color: #5e8d76;
+  border-color: var(--pine);
 }
 .reg-blocked,
 .reg-stale {
-  border-color: #b7934e;
+  border-color: var(--attention);
 }
 .reg-form {
   display: flex;
@@ -120,11 +131,11 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 12px;
-  background: #f6f5f1;
+  background: var(--surface-sunken);
   padding: 15px;
 }
 .reg-error {
-  color: #9e332b;
+  color: var(--danger);
   overflow-wrap: anywhere;
 }
 .reg-impact {
@@ -136,11 +147,11 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
-  border-top: 1px solid #ddd;
+  border-top: 1px solid var(--line);
   padding: 15px 0;
 }
 .reg-check-item {
-  border-top: 1px solid #ddd;
+  border-top: 1px solid var(--line);
   padding: 22px 0;
 }
 .reg-check-item details {
@@ -198,8 +209,8 @@ blockquote {
   gap: 20px;
   padding: 20px 24px;
   margin: 0 0 24px;
-  background: #fff3d8;
-  border: 2px solid #bb771a;
+  background: var(--attention-soft);
+  border: 2px solid var(--attention);
   border-radius: 10px;
 }
 .reg-alert-banner > div {
@@ -209,7 +220,7 @@ blockquote {
 }
 .reg-alert-banner strong {
   font-size: 18px;
-  color: #5c3909;
+  color: var(--attention);
 }
 .reg-alert-banner p {
   font-size: 14px;
@@ -222,15 +233,15 @@ blockquote {
   place-items: center;
   flex: 0 0 30px;
   height: 30px;
-  background: #8b5006;
-  color: white;
+  background: var(--attention);
+  color: var(--on-attention);
   border-radius: 50%;
   font-weight: bold;
 }
 .reg-notice,
 .reg-worker-message {
   padding: 22px 0;
-  border-top: 1px solid #ddd;
+  border-top: 1px solid var(--line);
 }
 .reg-notice {
   display: flex;
@@ -250,8 +261,8 @@ blockquote {
   font-size: 12px;
   font-weight: 700;
   border-radius: 20px;
-  background: #f6e2ba;
-  color: #613c07;
+  background: var(--attention-soft);
+  color: var(--attention);
   padding: 5px 10px;
 }
 .reg-worker-message {
@@ -275,12 +286,12 @@ blockquote {
 .reg-worker-brand {
   font-size: 24px;
   font-weight: bold;
-  color: #1e5344;
+  color: var(--pine);
   margin-bottom: 40px;
 }
 .reg-worker-reason {
   padding: 15px 18px;
-  background: #edf5f0;
+  background: var(--pine-soft);
   border-radius: 7px;
 }
 .reg-inbox-summary {
@@ -291,19 +302,19 @@ blockquote {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #fff0ce;
-  color: #633b00;
+  background: var(--attention-soft);
+  color: var(--attention);
   font-size: 13px;
   font-weight: bold;
-  border: 1px solid #bb771a;
+  border: 1px solid var(--attention);
   border-radius: 20px;
   padding: 6px 12px;
   text-decoration: none;
   white-space: nowrap;
 }
 .reg-shell-alert span {
-  background: #8b5006;
-  color: white;
+  background: var(--attention);
+  color: var(--on-attention);
   border-radius: 20px;
   padding: 1px 6px;
 }
@@ -330,8 +341,8 @@ blockquote {
 .compliance-item { margin-bottom: 18px; padding: 24px; }
 .compliance-item .reg-form { margin: 18px 0; max-width: 640px; }
 .compliance-item .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
-.compliance-review { padding: 20px; background: #f4f6f1; border-radius: 8px; }
-.compliance-fixtures { margin-top: 20px; border-top: 1px solid #ddd; padding-top: 14px; }
+.compliance-review { padding: 20px; background: var(--surface); border-radius: 8px; }
+.compliance-fixtures { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
 .compliance-page summary { cursor: pointer; padding: 10px 0; }
 .compliance-page input[type=file] { max-width: 100%; }
 @media (max-width: 640px) {
