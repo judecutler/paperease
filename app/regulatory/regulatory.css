@@ -341,3 +341,53 @@ blockquote {
   .compliance-page .cl-btn { min-height: 44px; white-space: normal; }
   .compliance-page .reg-stats { grid-template-columns: 1fr; }
 }
+
+/* Regulatory watch uses the existing PaperEase foundation tokens. */
+.reg-watch { display: grid; gap: var(--space-5); max-width: 1080px; margin: 0 auto; width: 100%; }
+.reg-watch-head { align-items: center; }
+.reg-watch-head p { margin-top: var(--space-2); }
+.reg-watch-summary { display: flex; flex-wrap: wrap; gap: var(--space-5); padding: var(--space-4) 0; border-block: 1px solid var(--line); color: var(--ink-muted); font-size: 14px; }
+.reg-watch-summary strong { color: var(--ink); font-family: var(--font-mono); font-size: 18px; margin-right: var(--space-1); }
+.reg-watch-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-3); }
+.reg-watch .reg-tabs { margin: 0; padding: var(--space-1); gap: var(--space-1); background: var(--surface-sunken); border-radius: var(--radius-md); }
+.reg-watch .reg-tabs > button { display: inline-flex; align-items: center; gap: var(--space-2); border: 0; background: transparent; color: var(--ink-muted); border-radius: var(--radius-sm); min-height: 40px; padding: var(--space-2) var(--space-4); font: inherit; font-size: 14px; font-weight: 700; }
+.reg-watch .reg-tabs > button[aria-selected=true] { background: var(--surface-raised); color: var(--pine); box-shadow: var(--shadow-sm); }
+.reg-tab-count { font-family: var(--font-mono); font-size: 11px; background: var(--pine-soft); color: var(--pine); border-radius: var(--radius-full); padding: 2px 6px; }
+.reg-watch-filters { display: flex; gap: var(--space-2); }
+.reg-watch-filters select { width: auto; max-width: 210px; min-height: 40px; background-color: var(--surface-raised); }
+.reg-watch-note { margin-top: calc(-1 * var(--space-3)); }
+.reg-rule-card { display: grid; gap: var(--space-4); box-shadow: var(--shadow-sm); }
+.reg-rule-card .card-head { margin: 0; align-items: flex-start; }
+.reg-rule-card .card-head > div { flex: 1; min-width: 220px; }
+.reg-rule-card h3 { margin-top: var(--space-2); font-weight: 700; font-size: 19px; line-height: 1.4; }
+.reg-rule-card .tag { flex-shrink: 0; background: var(--attention-soft); color: var(--attention); }
+.reg-rule-card .tag.reg-adopted { background: var(--pine-soft); color: var(--pine); }
+.reg-rule-obligation { max-width: 78ch; line-height: 1.6; }
+.reg-rule-meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); font-size: 13px; color: var(--ink-muted); }
+.reg-watch summary { cursor: pointer; font-size: 14px; font-weight: 700; color: var(--ink-muted); padding: var(--space-2) 0; }
+.reg-rule-details { border-top: 1px solid var(--line); padding-top: var(--space-2); }
+.reg-rule-details[open] > summary { margin-bottom: var(--space-3); }
+.reg-review-disclosure { border-top: 1px solid var(--line); padding-top: var(--space-2); }
+.reg-review-disclosure > summary { color: var(--pine); }
+.reg-watch .reg-review { border: 0; padding-top: var(--space-3); }
+.reg-rule-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); border-top: 1px solid var(--line); padding-top: var(--space-4); }
+.reg-rule-footer a { font-size: 14px; font-weight: 700; color: var(--pine); white-space: nowrap; }
+.reg-archive { margin-top: var(--space-2); }
+.reg-archive > summary { margin-bottom: var(--space-3); }
+.reg-archive article { margin-bottom: var(--space-3); }
+.reg-add-source > summary { color: var(--pine); }
+.reg-watch .reg-utilities .actions { margin-top: var(--space-4); }
+.reg-watch button:focus-visible, .reg-watch summary:focus-visible, .reg-watch select:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.reg-watch .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@media (max-width: 700px) {
+  .reg-watch { gap: var(--space-4); }
+  .reg-watch-toolbar { align-items: stretch; }
+  .reg-watch-toolbar > .reg-tabs { width: 100%; }
+  .reg-watch .reg-tabs > button { flex: 1; justify-content: center; padding-inline: var(--space-3); }
+  .reg-watch-filters { width: 100%; }
+  .reg-watch-filters select { flex: 1; min-width: 0; max-width: none; }
+  .reg-watch-head { align-items: flex-start; }
+  .reg-watch-summary { gap: var(--space-3) var(--space-5); }
+  .reg-rule-footer { flex-wrap: wrap; }
+  .reg-rule-card .card-head > div { min-width: 0; flex-basis: 100%; }
+}

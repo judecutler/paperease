@@ -25,7 +25,7 @@ export function RegulatoryNotifications({
           <span>{agency.notices.filter((n) => !n.read).length} unread</span>
         </div>
         {!agency.notices.length && (
-          <p>No regulation changes detected for your agency yet.</p>
+          <p>No changes detected yet.</p>
         )}
         {[...agency.notices].reverse().map((n) => (
           <article
@@ -39,18 +39,18 @@ export function RegulatoryNotifications({
               <h4>{n.title}</h4>
               <p>
                 {n.detail ||
-                  "A reviewed requirement has been adopted for your agency."}
+                  "A reviewed rule was adopted."}
               </p>
               <small>{new Date(n.at).toLocaleString()}</small>
             </div>
             <div className="actions">
-              <Button onClick={openChanges}>Review changes</Button>
+              <a href="/regulatory/watch" onClick={(e) => { e.preventDefault(); openChanges(); }}>Review changes</a>
               {!n.read && (
                 <Button
                   disabled={busy}
                   onClick={() => act({ type: "notice-read", id: n.id })}
                 >
-                  Mark alert as read
+                  Mark read
                 </Button>
               )}
             </div>
@@ -59,14 +59,11 @@ export function RegulatoryNotifications({
       </section>
       <section className="card">
         <div className="card-head">
-          <h3>Worker notification delivery</h3>
+          <h3>Worker updates</h3>
           <span>In-app messages</span>
         </div>
         <p className="muted small">
-          PaperEase publishes an assignment-specific message after an
-          administrator approves and adopts a requirement. Messages below are an
-          agency preview; the worker signs in to their own inbox to acknowledge
-          them. No SMS or email has been sent.
+          Workers see these updates after adoption. Delivery is in-app only.
         </p>
         <label>
           Show worker{" "}
@@ -85,8 +82,7 @@ export function RegulatoryNotifications({
         </label>
         {!messages.length && (
           <p>
-            No messages yet. Adopt a reviewed requirement affecting a worker to
-            trigger their notification.
+            No worker updates yet. Adopt an applicable rule to notify workers.
           </p>
         )}
         {[...messages].reverse().map((m) => (
@@ -99,7 +95,7 @@ export function RegulatoryNotifications({
               <span className="reg-notice-label">
                 {m.acknowledgedAt
                   ? "Acknowledged"
-                  : "Available in worker inbox"}
+                  : "Delivered in-app"}
               </span>
             </div>
             <p className="small muted">
@@ -125,7 +121,7 @@ export function RegulatoryNotifications({
               target="_blank"
               rel="noreferrer"
             >
-              Open worker inbox
+              View worker space
             </a>
           </article>
         ))}

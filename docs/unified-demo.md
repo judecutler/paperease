@@ -19,7 +19,7 @@ Do not run `next build` while the development server is running against the same
 ## Present
 
 1. The local scenario has been initialized with one fictional California company, Maria Lopez, and two adopted fictional policies. No shared Supabase data was changed.
-2. To start over, use **Reset guided demo** in Regulatory watch, open **Changes**, review and adopt the two active fictional rules. Do not adopt the expired training version.
+2. To start over, choose **More → Activity & demo → Reset demo** in Regulatory watch, then open **Changes**, open **Review rule**, approve the review, then adopt each of the two active fictional rules. Do not adopt the expired training version.
 3. Open Worker. The request explains the document, the adopted obligation and the deadline (unspecified in this fixture).
 4. Open **Fictional examples for the presentation** and select **Incomplete document**. The missing hours are shown. Select **Complete document** to prepare a replacement for human review. These are simulated text documents and simulated results, not real AI calls.
 5. Open Company, select Maria and **Review document**. Download the original, inspect the fields, check the attestation and **Approve**. Refresh Worker: the same requirement is **Approved**. Earlier files remain in **My documents**.
