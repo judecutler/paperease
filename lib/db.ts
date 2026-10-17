@@ -8,7 +8,7 @@ import type { AuditEvent, Caregiver, Db, RequirementState, RequirementType, SmsM
 // SUPABASE_SECRET_KEY set they live in Supabase (tables and the uploads bucket in supabase/migrations);
 // otherwise in a local JSON file and folder for the demo.
 
-const DATA_DIR = process.env.CARELOOP_DATA_DIR || (process.env.VERCEL ? '/tmp/careloop' : path.join(process.cwd(), 'data'));
+const DATA_DIR = process.env.PAPEREASE_DATA_DIR || (process.env.VERCEL ? '/tmp/paperease' : path.join(process.cwd(), 'data'));
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const BUCKET = 'uploads';
@@ -18,6 +18,7 @@ const AGENCY_ID = '00000000-0000-0000-0000-000000000001';
 
 let client: SupabaseClient | null | undefined;
 function supabase() {
+  if (process.env.REGULATORY_LOCAL_DEMO === 'true' && process.env.NODE_ENV !== 'production') return null;
   if (client === undefined) {
     const url = process.env.SUPABASE_URL;
     const key = process.env.SUPABASE_SECRET_KEY;
@@ -177,6 +178,7 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
       escalation: opt(s.escalation),
       followUps: s.follow_ups,
       supersedes: opt(s.supersedes),
+      registryCheck: opt(s.registry_check),
     })),
     messages: msgs.map((m): SmsMessage => ({
       id: m.id,
@@ -251,6 +253,7 @@ async function saveSupabase(sb: SupabaseClient, db: Db) {
     escalation: s.escalation ?? null,
     follow_ups: s.followUps,
     supersedes: s.supersedes ?? null,
+    registry_check: s.registryCheck ?? null,
     created_at: s.createdAt,
   })));
   await Promise.all([

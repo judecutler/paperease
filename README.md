@@ -1,8 +1,8 @@
-# CareLoop AI
+# PaperEase
 
 **Less chasing. More caring.**
 
-CareLoop is an AI agent that collects compliance documents from home care caregivers over SMS. It is built for California home care organizations (HCOs). The agent finds missing or expiring documents, texts the caregiver, reads the photo they send back, and asks follow-up questions. It then prepares a record for a person to verify and approve.
+PaperEase is an AI agent that collects compliance documents from home care caregivers over SMS. It is built for California home care organizations (HCOs). The agent finds missing or expiring documents, texts the caregiver, reads the photo they send back, and asks follow-up questions. It then prepares a record for a person to verify and approve.
 
 Built as a hackathon MVP. The full flow runs end to end with no API keys and no database.
 
@@ -12,6 +12,7 @@ Built as a hackathon MVP. The full flow runs end to end with no API keys and no 
 
 - **Gap detection:** checks every caregiver against the requirement checklist and flags documents that are missing or expiring.
 - **SMS outreach:** the agent requests documents in the caregiver's language (English or Spanish) and sends reminders.
+- **Caregiver upload link:** every request text carries a secure link to a phone-friendly page. Caregivers see what is needed, take a photo and answer the agent's question there, with no app or login. What they send fills in the agency's record the same way an SMS reply does.
 - **AI extraction:** reads the photo the caregiver sends and fills in each field with a confidence score and a pointer to where on the document it was found.
 - **Photo checks in messages:** shows each attachment's preliminary result and next step, with a detailed checklist available in the conversation.
 - **Follow-ups:** when a required field is missing, the agent asks the caregiver and reads the answer from their reply.
@@ -19,6 +20,8 @@ Built as a hackathon MVP. The full flow runs end to end with no API keys and no 
 - **Exception handling:** escalates to a person for blurry photos, name mismatches, too few training hours, wrong documents and opt-outs.
 - **Human approval:** a person verifies or corrects every field before a record can be approved.
 - **Audit trail:** every action by the agent, the admin and the caregiver is logged in order.
+
+<img src="docs/caregiver-link.png" alt="The caregiver's upload page asking for missing training hours" width="320">
 
 ![Reviewing a record](docs/maria-review.png)
 
@@ -39,6 +42,7 @@ On first run the app creates `data/db.json` with 6 sample caregivers. To start o
 2. Click **Ask agent to request**. The agent texts Maria and the status becomes **Requested**.
 3. On the simulated phone at the right, choose **Entry training** under **Check document for**, then send the **Training certificate, hours not shown (Maria)** sample photo. Its message shows **More information needed** and a suggested next step. Expand **View checks** to inspect the detailed result. The agent sees the hours are missing and asks a follow-up. The status becomes **Following up**.
 4. Reply with the **It was 5 hours** chip. The agent reads the hours from the reply and prepares the record. The status becomes **Pending review**.
+   Instead of steps 3 and 4 you can tap the link in the agent's text. It opens the caregiver's page, where you can send the sample document and answer the question the way a caregiver would.
 5. **Verify** or **Correct** each field. Once every field is confirmed, **Approve record** turns on. Approve it, then check the audit trail.
 
 Other cases to try:
@@ -59,11 +63,14 @@ Everything is optional. Copy `.env.example` to `.env.local` and fill in what you
 | Variable | Used for |
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Claude reads documents, writes SMS copy and interprets replies |
-| `CARELOOP_MODEL` | Claude model (default `claude-opus-5-5`) |
+| `PAPEREASE_MODEL` | Claude model (default `claude-opus-5-5`) |
 | `RUNANYWHERE_BASE_URL`, `RUNANYWHERE_API_KEY`, `RUNANYWHERE_MODEL` | Follow-up question copy through RunAnywhere (OpenAI-compatible) |
 | `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | Store data and uploads in Supabase instead of local files |
-| `CRON_SECRET` | Protects `/api/cron`, the daily sweep endpoint. Required in production |
-| `CARELOOP_DATA_DIR` | Where the local JSON store and uploads live (default `./data`) |
+| `SUPABASE_PUBLISHABLE_KEY` | Turns on admin sign-in with Supabase Auth |
+| `PAPEREASE_LINK_SECRET` | Signs the caregiver upload links. Required in production |
+| `CRON_SECRET` | Protects `/api/cron`, the daily sweep endpoint. Without it the endpoint refuses every call |
+| `REGISTRY_PROVIDER` | California HCA registry check: `demo` (default) or `manual` |
+| `PAPEREASE_DATA_DIR` | Where the local JSON store and uploads live (default `./data`) |
 
 ### AI
 
@@ -77,6 +84,24 @@ Each AI feature falls back to deterministic behavior when no key is set or a cal
 | Reply interpretation | Claude | Number and date rules |
 
 SMS is simulated. To connect Twilio, send from `Ctx.sms()` in `lib/agent.ts` and route inbound webhooks to the `caregiver-reply` action.
+
+### Admin sign-in
+
+With `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` set, every admin page and API route needs a signed-in admin. Decisions in the audit trail carry that person's name. The caregiver's upload page, its API and the cron endpoint stay public; each checks its own token or secret.
+
+There is no sign-up page. An account is an admin only when its Supabase `app_metadata.role` is `admin`, which only the secret key can set:
+
+```bash
+npm run admin:add -- dana@example.com "Dana Park"   # prints a password once; run it again to reset
+```
+
+Without Supabase (the local JSON demo) there is no sign-in.
+
+### Caregiver upload links
+
+Request, reminder and follow-up texts end with a link to `/u/<token>`. The token is signed with `PAPEREASE_LINK_SECRET` and scoped to one open request. It expires after 72 hours, and as soon as the request moves on, for example when the office asks for another document. The page shows only the caregiver's first name, the agency and the document requested. Uploads go through the same checks and storage as everything else.
+
+In demo mode (no `ANTHROPIC_API_KEY`) uploaded photos cannot be read, so the page also offers the sample documents, labeled as a demo.
 
 ### Photo checks in messages
 
@@ -121,6 +146,18 @@ npm run db:seed           # copies data/db.json (or the sample data) into Supaba
 
 With Supabase on, **Reset demo data** resets the Supabase tables. `npm run reset` only deletes the local JSON file.
 
+## California HCA registry check
+
+When a Home Care Aide registration is submitted, the agent looks the aide up on the California Home Care Aide Registry (CDSS) using the caregiver's name on file and the number from the document. The registry search needs first name, last name and PER ID / HCA ID, and returns one of 8 statuses.
+
+- `REGISTERED` and `REGISTERED*` (registered with an exemption) pass. `REGISTERED-PENDING REVIEW`, `PENDING`, `CLOSED`, `DENIED`, `FORFEITED` and `REVOKED` stop the record and escalate it to staff. No match (a misread number, or a name that disagrees with the registry) also escalates.
+- Approve stays disabled until the registry check passes, on top of every field being verified. If staff correct the number, the check re-runs and releases or stops the record.
+- Choose a provider with `REGISTRY_PROVIDER`: `demo` (default; a built-in sample registry) or `manual` (staff search the [CDSS registry](https://www.ccld.dss.ca.gov/hcsregistry/registrysearch.aspx) and record what it shows).
+- In demo mode, correct a record's registration number to try each outcome: `DEMO-EXEMPT`, `DEMO-REVIEW`, `DEMO-PENDING`, `DEMO-CLOSED`, `DEMO-DENIED`, `DEMO-FORFEITED`, `DEMO-REVOKED` (any name), or `ZZZ99999` for no match.
+- There is no provider that calls the CDSS website. It has no documented API, its Conditions of Use were not reviewed, and the ID format is not published, so ID validation is deliberately loose. Get CDSS's OK before automating (HCSB@dss.ca.gov).
+- Supabase: run `supabase/migrations/20261017000005_registry_check.sql` (adds `submissions.registry_check`).
+- `npm test` runs the registry and agent-flow tests.
+
 ## Validation
 
 ```bash
@@ -139,11 +176,15 @@ npm run build
 | `lib/llm.ts` | Claude and RunAnywhere calls with fallbacks |
 | `lib/photo-check.ts` | Per-attachment checks and preliminary outcomes |
 | `lib/db.ts` | Storage for data (`load()`/`save()`) and uploads (`writeUpload()`/`readUpload()`), in Supabase or local files |
+| `lib/registry.ts`, `lib/registry-providers.ts` | California HCA registry check: status rules, demo and manual providers |
 | `lib/seed.ts` | Requirement checklist and sample data |
+| `app/u/[token]/` | The caregiver's upload page |
+| `lib/links.ts`, `lib/caregiverLink.ts` | Signed upload links and what the caregiver's page shows |
 | `app/` | Next.js pages (dashboard, caregiver detail, audit trail, rules) and API routes, including `api/cron` for the daily sweep |
 | `components/` | UI components and the client data hook |
 | `components/PhotoCheckCard.tsx` | Compact message-thread result with expandable check details |
 | `supabase/migrations/` | Postgres tables and the Storage bucket |
+| `tests/` | `npm test`: registry rules and agent-flow tests |
 | `scripts/seed-supabase.ts` | Copies the local store into Supabase and checks the round trip |
 | `scripts/make-samples.mjs` | Generates the sample document images with Playwright |
 | `tests/` | Offline photo-check and persisted workflow tests |

@@ -7,8 +7,8 @@ const ts = require('typescript');
 
 // These integration tests exercise the actual persisted agent workflow without AI
 // credentials, a web server, or any possibility of contacting a live AI service.
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'careloop-photo-flow-'));
-process.env.CARELOOP_DATA_DIR = dataDir;
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'paperease-photo-flow-'));
+process.env.PAPEREASE_DATA_DIR = dataDir;
 process.env.ANTHROPIC_API_KEY = '';
 process.env.RUNANYWHERE_BASE_URL = '';
 process.env.RUNANYWHERE_API_KEY = '';
@@ -45,7 +45,7 @@ after(() => {
   const absolute = path.resolve(dataDir);
   const temporaryRoot = path.resolve(os.tmpdir());
   assert.equal(path.dirname(absolute), temporaryRoot);
-  assert.ok(path.basename(absolute).startsWith('careloop-photo-flow-'));
+  assert.ok(path.basename(absolute).startsWith('paperease-photo-flow-'));
   fs.rmSync(absolute, { recursive: true, force: true });
 });
 
@@ -300,7 +300,7 @@ test('Supabase mapping preserves photo-check snapshots and handles older message
       if (id === '@supabase/supabase-js') return { createClient: () => fakeSupabase };
       return realRequire(id);
     },
-    process: { env: { CARELOOP_DATA_DIR: dataDir, SUPABASE_URL: 'https://offline.invalid', SUPABASE_SECRET_KEY: 'offline-test-key' } },
+    process: { env: { PAPEREASE_DATA_DIR: dataDir, SUPABASE_URL: 'https://offline.invalid', SUPABASE_SECRET_KEY: 'offline-test-key' } },
     Buffer,
     console,
   }, { filename: dbFile });

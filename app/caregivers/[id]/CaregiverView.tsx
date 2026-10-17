@@ -3,14 +3,17 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Shell } from '@/components/Shell';
 import { ApprovalBar, AuditTrail, Button, EscalationNotice, ExtractedField, SmsThread, StatusBadge } from '@/components/ui';
-import { dateLabel, timeLabel, useCareLoop } from '@/components/useCareLoop';
+import { RegistryCheckCard } from '@/components/RegistryCheck';
+import { dateLabel, timeLabel, usePaperEase } from '@/components/usePaperEase';
+import { approvalBlocker, needsRegistryCheck } from '@/lib/registry';
+import type { Payload } from '@/lib/payload';
 import type { ExtractedFieldValue, RequirementState, RequirementType, Submission } from '@/lib/types';
 
 const unverified = (s: Submission) =>
   s.fields.filter((f) => (f.value !== null && (f.source === 'ai' || f.source === 'caregiver')) || (f.required && f.value === null)).length;
 
 export function CaregiverView({ id, initialReq }: { id: string; initialReq?: string }) {
-  const { data, busy, error, setError, act } = useCareLoop();
+  const { data, busy, error, setError, act } = usePaperEase();
   const [selected, setSelected] = useState<string | undefined>(initialReq);
 
   const db = data?.db;
@@ -25,7 +28,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
   }, [db]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!data || !db) return <Shell error={error}><p className="loading">Loading…</p></Shell>;
-  if (!cg) return <Shell ai={data.ai}><p className="loading">No caregiver with this id. <Link href="/">Back to dashboard</Link></p></Shell>;
+  if (!cg) return <Shell ai={data.ai} me={data.me}><p className="loading">No caregiver with this id. <Link href="/">Back to dashboard</Link></p></Shell>;
 
   const selState = states.find((s) => s.requirementId === selected);
   const subId = selState?.openSubmissionId || selState?.approvedSubmissionId;
@@ -43,7 +46,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
     .map((r) => ({ id: r.id, name: r.name }));
 
   return (
-    <Shell ai={data.ai} error={error} onDismiss={() => setError(null)}>
+    <Shell ai={data.ai} me={data.me} error={error} onDismiss={() => setError(null)}>
       <div className="page-head">
         <div>
           <div className="eyebrow"><Link href="/">Dashboard</Link> / Caregiver</div>
@@ -74,9 +77,12 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
             <ReviewPanel
               key={`${selState.requirementId}-${sub?.id}`}
               reqName={db.rules.requirements.find((r) => r.id === selState.requirementId)!.name}
+              reqId={selState.requirementId}
+              registry={data.registry}
               state={selState}
               sub={sub}
               firstName={cg.firstName}
+              cgName={cg.name}
               busy={busy}
               act={act}
             />
@@ -97,7 +103,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
   );
 }
 
-type Act = ReturnType<typeof useCareLoop>['act'];
+type Act = ReturnType<typeof usePaperEase>['act'];
 
 function RequirementRow({ s, req, selected, busy, onSelect, act }: { s: RequirementState; req: RequirementType; selected: boolean; busy: boolean; onSelect: () => void; act: Act }) {
   return (
@@ -133,7 +139,7 @@ function RequirementRow({ s, req, selected, busy, onSelect, act }: { s: Requirem
   );
 }
 
-function ReviewPanel({ reqName, state, sub, firstName, busy, act }: { reqName: string; state: RequirementState; sub?: Submission; firstName: string; busy: boolean; act: Act }) {
+function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, busy, act }: { reqName: string; reqId: string; registry: Payload['registry']; state: RequirementState; sub?: Submission; firstName: string; cgName: string; busy: boolean; act: Act }) {
   if (!sub || (sub.state === 'collecting' && sub.files.length === 0)) {
     return (
       <section className="card">
@@ -153,6 +159,8 @@ function ReviewPanel({ reqName, state, sub, firstName, busy, act }: { reqName: s
   }
   const n = unverified(sub);
   const locked = sub.state === 'approved' || sub.state === 'rejected';
+  const checksRegistry = needsRegistryCheck(reqId);
+  const blocker = checksRegistry && !locked ? approvalBlocker(sub.registryCheck) : null;
   return (
     <section className="card stack">
       <div className="card-head" style={{ marginBottom: 0 }}>
@@ -201,9 +209,12 @@ function ReviewPanel({ reqName, state, sub, firstName, busy, act }: { reqName: s
         </div>
       </div>
 
+      {checksRegistry && <RegistryCheckCard sub={sub} cgName={cgName} registry={registry} locked={locked} busy={busy} act={act} />}
+
       {!locked && sub.state !== 'collecting' && (
         <ApprovalBar
           unverified={n}
+          blocker={blocker}
           busy={busy}
           note={n > 0 ? 'Check each value against the original, then verify or correct it.' : undefined}
           onApprove={() => act({ type: 'approve', submissionId: sub.id })}

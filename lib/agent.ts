@@ -1,8 +1,11 @@
 import { load, newId, save, reset } from './db';
 import { draftSms, extractDocument, interpretReply, isOptOut, type SmsKind } from './llm';
+import { linkUrl } from './links';
 import { findSample } from './samples';
 import { inspectPhoto, sameCaregiverName, uncheckedPhoto } from './photo-check';
-import type { Actor, Caregiver, Db, ExtractedFieldValue, RequirementState, RequirementType, SmsMessage, Submission, SubmissionFile } from './types';
+import { approvalBlocker, findPerIdInText, needsRegistryCheck, REGISTRY_REASON_PREFIX, registryEscalation } from './registry';
+import { checkRegistry, manualRegistryCheck } from './registry-providers';
+import type { Actor, Caregiver, Db, ExtractedFieldValue, RegistryStatus, RequirementState, RequirementType, SmsMessage, Submission, SubmissionFile } from './types';
 
 export type Action =
   | { type: 'run-gap-check' }
@@ -10,12 +13,14 @@ export type Action =
   | { type: 'authorize-outreach'; caregiverId: string; requirementId: string }
   | { type: 'authorize-all' }
   | { type: 'send-reminder'; caregiverId: string; requirementId: string }
-  | { type: 'caregiver-reply'; caregiverId: string; requirementId?: string; text?: string; sampleId?: string; upload?: SubmissionFile }
+  | { type: 'caregiver-reply'; caregiverId: string; text?: string; sampleId?: string; upload?: SubmissionFile; requirementId?: string; via?: 'link' }
   | { type: 'verify-field'; submissionId: string; key: string }
   | { type: 'edit-field'; submissionId: string; key: string; value: string }
   | { type: 'approve'; submissionId: string }
   | { type: 'reject'; submissionId: string; reason?: string }
   | { type: 'request-another'; submissionId: string }
+  | { type: 'check-registry'; submissionId: string }
+  | { type: 'record-registry-check'; submissionId: string; result: RegistryStatus | 'NOT_FOUND' }
   | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es' }
   | { type: 'update-rules'; expiringWithinDays: number; minConfidence: number; maxFollowUps: number; autoRequest: boolean; reminderAfterDays: number; maxReminders: number }
   | { type: 'reset' };
@@ -23,8 +28,16 @@ export type Action =
 const OPEN: RequirementState['status'][] = ['requested', 'following-up'];
 const now = () => new Date().toISOString();
 
+// texts that ask the caregiver for something carry the secure upload link for that request
+const LINK_KINDS: SmsKind[] = ['request', 'reminder', 'follow-up', 'wrong-doc', 'request-another'];
+
 class Ctx {
-  constructor(public db: Db) {}
+  /** origin is the app's public URL, used to build upload links; without it texts go out with no link.
+   *  admin is the signed-in person acting, recorded on decisions; demo mode without login uses the agency's admin. */
+  admin: string;
+  constructor(public db: Db, public origin?: string, admin?: string) {
+    this.admin = admin || db.agency.admin;
+  }
   caregiver(id: string) {
     const c = this.db.caregivers.find((x) => x.id === id);
     if (!c) throw new Error(`Unknown caregiver ${id}`);
@@ -50,7 +63,11 @@ class Ctx {
   }
   async sms(kind: SmsKind, cg: Caregiver, req: RequirementType, extra: { missingField?: { key: string; label: string }; documentType?: string } = {}) {
     if (cg.optedOut && kind !== 'opted-out') return;
-    const text = await draftSms(kind, { caregiver: cg, requirement: req, ...extra });
+    let text = await draftSms(kind, { caregiver: cg, requirement: req, ...extra });
+    // appended after drafting so the model never writes or sees the URL
+    const subId = this.db.requirements.find((s) => s.caregiverId === cg.id && s.requirementId === req.id)?.openSubmissionId;
+    const link = this.origin && subId && LINK_KINDS.includes(kind) ? linkUrl(this.origin, subId) : null;
+    if (link) text += `\n${cg.language === 'es' ? 'O súbelo aquí' : 'Or upload it here'}: ${link}`;
     this.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text, time: now() });
     return text;
   }
@@ -120,7 +137,59 @@ function evaluate(c: Ctx, sub: Submission, cg: Caregiver, req: RequirementType):
     }
     return { kind: 'follow-up', field: missing };
   }
+  const registryReason = sub.registryCheck && registryEscalation(sub.registryCheck);
+  if (registryReason) return { kind: 'escalate', reason: registryReason };
   return { kind: 'ready' };
+}
+
+/* ---------------- California HCA registry ---------------- */
+
+const registryNumber = (sub: Submission) => sub.fields.find((f) => f.key === 'registration_number');
+
+/**
+ * Looks the aide up on the registry with the caregiver's name on file and the number from the document.
+ * Skips when there is no number yet, or when the number was read at a confidence the agent would not trust anyway.
+ */
+async function lookUpRegistry(c: Ctx, sub: Submission, cg: Caregiver, req: RequirementType) {
+  const num = registryNumber(sub);
+  if (!needsRegistryCheck(req.id) || !num?.value) return;
+  if (num.source === 'ai' && (num.confidence ?? 1) < c.db.rules.minConfidence) return;
+  sub.registryCheck = await checkRegistry(cg.name, num.value);
+  const r = sub.registryCheck;
+  const result = r.outcome === 'found' ? r.status : r.outcome === 'not-found' ? 'no match' : 'could not check';
+  c.log({
+    caregiverId: cg.id,
+    requirementId: req.id,
+    actor: 'agent',
+    action: 'checked the California HCA registry',
+    detail: `${cg.name}, ID ${r.perIdMasked}: ${result}${r.note && r.outcome !== 'not-found' ? `. ${r.note}` : ''} (${r.by === 'demo' ? 'demo registry' : 'manual'})`,
+  });
+}
+
+const evaluateFresh = async (c: Ctx, sub: Submission, cg: Caregiver, req: RequirementType) => {
+  await lookUpRegistry(c, sub, cg, req);
+  return evaluate(c, sub, cg, req);
+};
+
+/**
+ * After a person (not the agent) changes or records a registry result: stop the record if the registry says no,
+ * and release it again if a registry escalation no longer applies. Never touches other kinds of escalation.
+ */
+function settleRegistry(sub: Submission, state: RequirementState) {
+  if (!sub.registryCheck || (sub.state !== 'ready' && sub.state !== 'escalated')) return;
+  const reason = registryEscalation(sub.registryCheck);
+  const otherEscalation = sub.state === 'escalated' && !sub.escalation?.startsWith(REGISTRY_REASON_PREFIX);
+  if (reason && !otherEscalation) {
+    sub.state = 'escalated';
+    sub.escalation = reason;
+    state.status = 'escalated';
+    state.explanation = reason;
+  } else if (sub.state === 'escalated' && sub.escalation?.startsWith(REGISTRY_REASON_PREFIX)) {
+    sub.state = 'ready';
+    sub.escalation = undefined;
+    state.status = 'pending-review';
+    state.explanation = 'Record prepared from the caregiver’s submission. Waiting for a person to verify.';
+  }
 }
 
 async function applyVerdict(c: Ctx, v: Verdict, sub: Submission, state: RequirementState, cg: Caregiver, req: RequirementType, docType?: string) {
@@ -183,8 +252,10 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
     return;
   }
 
+  // a reply through an upload link names its request; an SMS only matches when exactly one request is open
   const state = openStateFor(c, cg.id, a.requirementId);
-  c.log({ caregiverId: cg.id, requirementId: state?.requirementId, actor: 'caregiver', who: cg.name, action: file ? 'replied with a photo' : 'replied by text', detail: file ? file.name : `"${text}"` });
+  const action = a.via === 'link' ? (file ? 'uploaded a document through the secure link' : 'answered through the secure link') : file ? 'replied with a photo' : 'replied by text';
+  c.log({ caregiverId: cg.id, requirementId: state?.requirementId, actor: 'caregiver', who: cg.name, action, detail: file ? file.name : `"${text}"` });
   if (!state) {
     const reason = a.requirementId
       ? 'The selected document request is no longer open. Ask staff to open a request before sending another photo.'
@@ -243,20 +314,22 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
     });
     const filled = sub.fields.filter((f) => f.value).length;
     c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: `extracted ${filled} of ${sub.fields.length} fields`, detail: [ex.by === 'claude' ? 'Read by Claude.' : 'Demo extraction.', ex.note].filter(Boolean).join(' ') });
-    return applyVerdict(c, evaluate(c, sub, cg, req), sub, state, cg, req, ex.documentType);
+    return applyVerdict(c, await evaluateFresh(c, sub, cg, req), sub, state, cg, req, ex.documentType);
   }
 
   if (text) {
     const missing = sub.fields.find((f) => f.required && f.value === null);
     if (state.status === 'following-up' && missing) {
       const spec = req.fields.find((f) => f.key === missing.key)!;
-      const got = await interpretReply(text, spec);
+      // an ID inside a sentence ("my number is 4417-2290") is read by rule; anything else goes to the usual interpreter
+      const idInText = missing.key === 'registration_number' ? findPerIdInText(text) : null;
+      const got = idInText ? { value: idInText, confidence: 0.85 } : await interpretReply(text, spec);
       if (got.value) {
-        Object.assign(missing, { value: got.value, source: 'caregiver', confidence: got.confidence, sourceRef: `SMS reply: "${text.slice(0, 60)}"` });
+        Object.assign(missing, { value: got.value, source: 'caregiver', confidence: got.confidence, sourceRef: `${a.via === 'link' ? 'Link answer' : 'SMS reply'}: "${text.slice(0, 60)}"` });
         c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: `read ${missing.label.toLowerCase()} from the reply`, detail: `${got.value}. Marked as caregiver-reported until verified.` });
-        return applyVerdict(c, evaluate(c, sub, cg, req), sub, state, cg, req);
+        return applyVerdict(c, await evaluateFresh(c, sub, cg, req), sub, state, cg, req);
       }
-      return applyVerdict(c, evaluate(c, sub, cg, req), sub, state, cg, req);
+      return applyVerdict(c, await evaluateFresh(c, sub, cg, req), sub, state, cg, req);
     }
     await c.sms('reminder', cg, req);
     c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'asked again for a photo', detail: 'The reply had no document attached.' });
@@ -281,7 +354,7 @@ async function authorize(c: Ctx, caregiverId: string, requirementId: string, by:
   state.openSubmissionId = sub.id;
   state.status = 'requested';
   state.explanation = `Agent asked ${cg.firstName} by SMS. Waiting for a reply.`;
-  if (by === 'admin') c.log({ caregiverId, requirementId, actor: 'admin', who: c.db.agency.admin, action: 'authorized outreach' });
+  if (by === 'admin') c.log({ caregiverId, requirementId, actor: 'admin', who: c.admin, action: 'authorized outreach' });
   else c.log({ caregiverId, requirementId, actor: 'system', action: 'authorized outreach by rule', detail: 'Automatic requests are on in Rules.' });
   await c.sms('request', cg, req);
   c.log({ caregiverId, requirementId, actor: 'agent', action: cg.language === 'es' ? 'sent an SMS request in Spanish' : 'sent an SMS request', detail: cg.phone });
@@ -342,16 +415,18 @@ async function sweep(c: Ctx, trigger: 'schedule' | 'admin') {
   ].filter(Boolean);
   c.log({
     actor: trigger === 'admin' ? 'admin' : 'system',
-    who: trigger === 'admin' ? c.db.agency.admin : undefined,
+    who: trigger === 'admin' ? c.admin : undefined,
     action: trigger === 'admin' ? 'ran the daily sweep' : 'ran the scheduled daily sweep',
     detail: [did.length ? did.join(', ') + '.' : 'Nothing to send.', ...changes].join(' '),
   });
 }
 
-export async function run(action: Action): Promise<Db> {
+export async function run(action: Action, opts: { origin?: string; admin?: string; db?: Db } = {}): Promise<Db> {
+  // opts.db: a regulatory workspace's store, which cannot be reset or grow caregivers from here
+  if (opts.db && ['reset', 'add-caregiver'].includes(action.type)) throw new Error('Use regulatory onboarding to manage this workspace.');
   if (action.type === 'reset') return await reset();
-  const db = await load();
-  const c = new Ctx(db);
+  const db = opts.db || await load();
+  const c = new Ctx(db, opts.origin, opts.admin);
   switch (action.type) {
     case 'run-gap-check': {
       const changes = detectGaps(db);
@@ -372,14 +447,14 @@ export async function run(action: Action): Promise<Db> {
         if (!c.req(s.requirementId).smsCollectible || !cg.smsConsent || cg.optedOut) continue;
         if (await authorize(c, s.caregiverId, s.requirementId)) sent++;
       }
-      c.log({ actor: 'admin', who: db.agency.admin, action: `delegated ${sent} gap${sent === 1 ? '' : 's'} to the agent` });
+      c.log({ actor: 'admin', who: c.admin, action: `delegated ${sent} gap${sent === 1 ? '' : 's'} to the agent` });
       break;
     }
     case 'send-reminder': {
       const cg = c.caregiver(action.caregiverId);
       const req = c.req(action.requirementId);
       await c.sms('reminder', cg, req);
-      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent a reminder', detail: `Requested by ${db.agency.admin}.` });
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent a reminder', detail: `Requested by ${c.admin}.` });
       break;
     }
     case 'caregiver-reply':
@@ -394,13 +469,50 @@ export async function run(action: Action): Promise<Db> {
         const before = f.value;
         f.value = action.value.trim() || null;
         f.source = 'edited';
-        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: db.agency.admin, action: `corrected ${f.label.toLowerCase()}`, detail: `${before ?? 'empty'} → ${f.value ?? 'empty'}` });
+        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: c.admin, action: `corrected ${f.label.toLowerCase()}`, detail: `${before ?? 'empty'} → ${f.value ?? 'empty'}` });
       } else {
         if (f.value === null) throw new Error('Nothing to verify: enter a value first.');
         f.source = 'verified';
-        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: db.agency.admin, action: `verified ${f.label.toLowerCase()}`, detail: f.value });
+        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: c.admin, action: `verified ${f.label.toLowerCase()}`, detail: f.value });
       }
-      f.verifiedBy = db.agency.admin.split(' ')[0];
+      f.verifiedBy = c.admin.split(' ')[0];
+      // a corrected registration number is a new question for the registry
+      if (action.type === 'edit-field' && f.key === 'registration_number' && needsRegistryCheck(sub.requirementId) && sub.state !== 'approved' && sub.state !== 'rejected') {
+        sub.registryCheck = undefined;
+        await lookUpRegistry(c, sub, c.caregiver(sub.caregiverId), c.req(sub.requirementId));
+        settleRegistry(sub, c.state(sub.caregiverId, sub.requirementId));
+      }
+      break;
+    }
+    case 'check-registry': {
+      const sub = c.sub(action.submissionId);
+      const req = c.req(sub.requirementId);
+      if (!needsRegistryCheck(req.id)) throw new Error('Only the Home Care Aide registration is checked against the registry.');
+      if (sub.state === 'approved' || sub.state === 'rejected') throw new Error('This record is closed. Request a new document to check again.');
+      if (!registryNumber(sub)?.value) throw new Error('There is no registration number to look up yet. Enter it first.');
+      sub.registryCheck = undefined;
+      await lookUpRegistry(c, sub, c.caregiver(sub.caregiverId), req);
+      settleRegistry(sub, c.state(sub.caregiverId, sub.requirementId));
+      break;
+    }
+    case 'record-registry-check': {
+      const sub = c.sub(action.submissionId);
+      const cg = c.caregiver(sub.caregiverId);
+      const req = c.req(sub.requirementId);
+      if (!needsRegistryCheck(req.id)) throw new Error('Only the Home Care Aide registration is checked against the registry.');
+      if (sub.state === 'approved' || sub.state === 'rejected') throw new Error('This record is closed. Request a new document to check again.');
+      const num = registryNumber(sub)?.value;
+      if (!num) throw new Error('There is no registration number to record a result for yet. Enter it first.');
+      sub.registryCheck = manualRegistryCheck(cg.name, num, action.result, c.admin);
+      c.log({
+        caregiverId: cg.id,
+        requirementId: req.id,
+        actor: 'admin',
+        who: c.admin,
+        action: 'recorded a California HCA registry lookup',
+        detail: `${cg.name}, ID ${sub.registryCheck.perIdMasked}: ${action.result === 'NOT_FOUND' ? 'no match' : action.result}`,
+      });
+      settleRegistry(sub, c.state(sub.caregiverId, sub.requirementId));
       break;
     }
     case 'approve': {
@@ -408,6 +520,10 @@ export async function run(action: Action): Promise<Db> {
       const req = c.req(sub.requirementId);
       const requiredMissing = req.fields.some((spec) => spec.required && !sub.fields.find((field) => field.key === spec.key)?.value?.trim());
       if (requiredMissing || unverifiedCount(sub) > 0) throw new Error('Every field must be verified by a person before approval.');
+      if (needsRegistryCheck(req.id)) {
+        const blocker = approvalBlocker(sub.registryCheck);
+        if (blocker) throw new Error(blocker);
+      }
       const cg = c.caregiver(sub.caregiverId);
       const state = c.state(sub.caregiverId, sub.requirementId);
       const val = (k: string) => sub.fields.find((f) => f.key === k)?.value || undefined;
@@ -417,8 +533,8 @@ export async function run(action: Action): Promise<Db> {
       state.approvedSubmissionId = sub.id;
       state.openSubmissionId = undefined;
       state.expiresOn = val('expiration_date') || (base && req.validMonths ? addMonths(base, req.validMonths) : undefined);
-      state.explanation = `Approved by ${db.agency.admin}.`;
-      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: db.agency.admin, action: 'approved the record', detail: state.expiresOn ? `Valid until ${fmt(state.expiresOn)}.` : 'No expiry.' });
+      state.explanation = `Approved by ${c.admin}.`;
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: c.admin, action: 'approved the record', detail: state.expiresOn ? `Valid until ${fmt(state.expiresOn)}.` : 'No expiry.' });
       detectGaps(db);
       await c.sms('approved', cg, req);
       break;
@@ -429,8 +545,8 @@ export async function run(action: Action): Promise<Db> {
       sub.state = 'rejected';
       state.status = 'missing';
       state.openSubmissionId = undefined;
-      state.explanation = `Submission rejected by ${db.agency.admin}${action.reason ? `: ${action.reason}` : '.'}`;
-      c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: db.agency.admin, action: 'rejected the submission', detail: action.reason });
+      state.explanation = `Submission rejected by ${c.admin}${action.reason ? `: ${action.reason}` : '.'}`;
+      c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: c.admin, action: 'rejected the submission', detail: action.reason });
       break;
     }
     case 'request-another': {
@@ -443,8 +559,8 @@ export async function run(action: Action): Promise<Db> {
       db.submissions.push(next);
       state.openSubmissionId = next.id;
       state.status = 'requested';
-      state.explanation = `${db.agency.admin} asked for another document. Agent is waiting for ${cg.firstName}.`;
-      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: db.agency.admin, action: 'requested another document' });
+      state.explanation = `${c.admin} asked for another document. Agent is waiting for ${cg.firstName}.`;
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: c.admin, action: 'requested another document' });
       await c.sms('request-another', cg, req);
       c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent an SMS request' });
       break;
@@ -458,7 +574,7 @@ export async function run(action: Action): Promise<Db> {
         db.requirements.push({ caregiverId: id, requirementId: r.id, status: 'missing', explanation: `No ${r.name.toLowerCase()} on file. ${r.rule}` });
       }
       detectGaps(db);
-      c.log({ caregiverId: id, actor: 'admin', who: db.agency.admin, action: 'added a caregiver', detail: `${name}, ${db.rules.requirements.length} requirements flagged as missing.` });
+      c.log({ caregiverId: id, actor: 'admin', who: c.admin, action: 'added a caregiver', detail: `${name}, ${db.rules.requirements.length} requirements flagged as missing.` });
       break;
     }
     case 'update-rules': {
@@ -470,10 +586,10 @@ export async function run(action: Action): Promise<Db> {
       db.rules.maxReminders = Math.max(0, Math.round(action.maxReminders));
       const changes = detectGaps(db);
       const r = db.rules;
-      c.log({ actor: 'admin', who: db.agency.admin, action: 'updated compliance rules', detail: `Expiring window ${r.expiringWithinDays} days, confidence floor ${Math.round(r.minConfidence * 100)}%, ${r.maxFollowUps} follow-ups. Daily sweep: ${r.autoRequest ? 'requests new gaps' : 'waits for an admin to request'}, reminds after ${r.reminderAfterDays} day${r.reminderAfterDays === 1 ? '' : 's'}, escalates after ${r.maxReminders} reminder${r.maxReminders === 1 ? '' : 's'}.${changes.length ? ' ' + changes.join('; ') : ''}` });
+      c.log({ actor: 'admin', who: c.admin, action: 'updated compliance rules', detail: `Expiring window ${r.expiringWithinDays} days, confidence floor ${Math.round(r.minConfidence * 100)}%, ${r.maxFollowUps} follow-ups. Daily sweep: ${r.autoRequest ? 'requests new gaps' : 'waits for an admin to request'}, reminds after ${r.reminderAfterDays} day${r.reminderAfterDays === 1 ? '' : 's'}, escalates after ${r.maxReminders} reminder${r.maxReminders === 1 ? '' : 's'}.${changes.length ? ' ' + changes.join('; ') : ''}` });
       break;
     }
   }
-  await save(db);
+  if (!opts.db) await save(db);
   return db;
 }
