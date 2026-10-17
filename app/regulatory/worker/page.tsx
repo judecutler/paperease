@@ -1,2 +1,2 @@
-import { ComplianceWorkspace } from "@/components/ComplianceWorkspace";
-export default function Page() { return <ComplianceWorkspace worker />; }
+import { WorkerSpace } from "@/components/WorkerSpace";
+export default function Page() { return <WorkerSpace />; }
