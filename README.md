@@ -1,71 +1,113 @@
-# CareLoop AI (Hackathon MVP)
+# CareLoop AI
 
-Less chasing. More caring. A caregiver document collection agent for California HCOs. The full P0 flow from the PRD (gap detection, SMS requests, photo collection, AI extraction, follow-up questions, admin approval, audit log) runs end to end, even without API keys.
+**Less chasing. More caring.**
 
-## Running
+CareLoop is an AI agent that collects compliance documents from home care caregivers over SMS. It is built for California home care organizations (HCOs). The agent finds missing or expiring documents, texts the caregiver, reads the photo they send back, and asks follow-up questions. It then prepares a record for a person to verify and approve.
+
+Built as a hackathon MVP. The full flow runs end to end with no API keys and no database.
+
+![Dashboard](docs/dashboard.png)
+
+## Features
+
+- **Gap detection:** checks every caregiver against the requirement checklist and flags documents that are missing or expiring.
+- **SMS outreach:** the agent requests documents in the caregiver's language (English or Spanish) and sends reminders.
+- **AI extraction:** reads the photo the caregiver sends and fills in each field with a confidence score and a pointer to where on the document it was found.
+- **Follow-ups:** when a required field is missing, the agent asks the caregiver and reads the answer from their reply.
+- **Exception handling:** escalates to a person for blurry photos, name mismatches, too few training hours, wrong documents and opt-outs.
+- **Human approval:** a person verifies or corrects every field before a record can be approved.
+- **Audit trail:** every action by the agent, the admin and the caregiver is logged in order.
+
+![Reviewing a record](docs/maria-review.png)
+
+## Quick start
+
+Requires Node.js 20 or later.
 
 ```bash
 npm install
 npm run dev        # http://localhost:3000
 ```
 
-Data is stored in `data/db.json` and seeded with 6 sample caregivers on first run. To reset, use **Reset demo data** on the Rules screen or run `npm run reset`.
+On first run the app creates `data/db.json` with 6 sample caregivers. To start over, click **Reset demo data** on the Rules screen or run `npm run reset`.
 
-### Supabase
+## Demo walkthrough
 
-Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in `.env.local` and the app reads and writes Supabase instead of `data/db.json`, and stores uploaded photos in the private `uploads` Storage bucket instead of `data/uploads`. The key stays on the server: every table has RLS on with no policies, and files are served through `/api/files`.
+1. On the dashboard, Maria Lopez's **Entry training** is **Missing**. Click her row.
+2. Click **Ask agent to request**. The agent texts Maria and the status becomes **Requested**.
+3. On the simulated phone at the right, send the **Training certificate, hours not shown (Maria)** photo. The agent extracts 4 fields, sees the hours are missing and asks a follow-up. The status becomes **Following up**.
+4. Reply with the **It was 5 hours** chip. The agent reads the hours from the reply and prepares the record. The status becomes **Pending review**.
+5. **Verify** or **Correct** each field. Once every field is confirmed, **Approve record** turns on. Approve it, then check the audit trail.
 
-```bash
-npx supabase link --project-ref <ref>
-npx supabase db push      # tables from supabase/migrations
-npm run db:seed           # copies data/db.json (or the seed data) into Supabase
-```
+Other cases to try:
 
-With Supabase on, **Reset demo data** resets the Supabase tables; `npm run reset` only deletes the local JSON file.
+| Try this | What happens |
+| --- | --- |
+| Luis is already **Escalated** for a blurry photo. Request again and send **HCA registration, clear photo** | The agent extracts the registration |
+| Send a document with someone else's name | Escalated for a name mismatch |
+| Reply `I did 3 hours` | Escalated for falling short of the 5-hour minimum |
+| Send a TB result instead of a training certificate | The agent asks for the right document |
+| Reply `STOP` | The caregiver is opted out and open requests go to staff |
+| Open Ana or Luis | The conversation is in Spanish |
 
-## Demo scenario (PRD section 7, Maria)
+## Configuration
 
-1. On the dashboard, Maria Lopez's Entry training is **Missing**. Click the row to open the detail view.
-2. **Ask agent to request** → the agent sends an SMS and the status becomes **Requested**.
-3. On the phone at the right, send the **Training certificate, hours not shown (Maria)** photo as Maria → the AI extracts 4 fields, asks a follow-up because the hours are missing, and the status becomes **Following up**.
-4. Reply with the `It was 5 hours` chip → the agent reads the hours from the reply and prepares the record; the status becomes **Pending review**.
-5. **Verify** or **Correct** each field → once all are confirmed, **Approve record** is enabled → **Approved**. The audit log records the entire process in chronological order.
+Everything is optional. Copy `.env.example` to `.env.local` and fill in what you need.
 
-Exception handling (FR-07) can be shown right away too:
-- Luis: already **Escalated** because of a blurry photo. Request again, then send "HCA registration, clear photo".
-- Sending a document with someone else's name → escalated for name mismatch.
-- `I did 3 hours` → escalated for falling short of the 5-hour minimum.
-- The wrong document (a TB result instead of a training certificate) → the agent asks for the correct document again.
-- `STOP` → opt-out is processed and open requests are handed off to staff.
-- Ana and Luis converse in Spanish (P1 multilingual).
+| Variable | Used for |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Claude reads documents, writes SMS copy and interprets replies |
+| `CARELOOP_MODEL` | Claude model (default `claude-opus-5-5`) |
+| `RUNANYWHERE_BASE_URL`, `RUNANYWHERE_API_KEY`, `RUNANYWHERE_MODEL` | Follow-up question copy through RunAnywhere (OpenAI-compatible) |
+| `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | Store data and uploads in Supabase instead of local files |
+| `CARELOOP_DATA_DIR` | Where the local JSON store and uploads live (default `./data`) |
 
-## AI integration
+### AI
 
-Add keys to `.env.local` to use real models (see `.env.example`). If no key is set or a call fails, it always falls back to deterministic behavior.
+Each AI feature falls back to deterministic behavior when no key is set or a call fails.
 
 | Feature | With keys | Without keys |
 | --- | --- | --- |
-| Document extraction | Claude (`claude-opus-5-5`) vision + structured output. Actually reads the sample PNGs and uploaded photos | Predefined extraction results for each sample document. Photos you upload yourself are escalated for a human to read |
-| SMS wording | Written by Claude based on templates | English/Spanish templates |
-| Follow-up question wording | RunAnywhere when configured (OpenAI-compatible), otherwise Claude | Templates |
-| Reply interpretation | Claude | Number/date rules |
+| Document extraction | Claude vision with structured output reads sample and uploaded photos | Preset results for each sample document. Your own uploads are escalated for a person to read |
+| SMS copy | Claude, based on templates | English and Spanish templates |
+| Follow-up questions | RunAnywhere if configured, otherwise Claude | Templates |
+| Reply interpretation | Claude | Number and date rules |
 
-SMS is simulated. To hook up Twilio, send from the single `Ctx.sms()` in `lib/agent.ts` and pass the inbound webhook to the `caregiver-reply` action.
+SMS is simulated. To connect Twilio, send from `Ctx.sms()` in `lib/agent.ts` and route inbound webhooks to the `caregiver-reply` action.
 
-## Structure
+### Supabase
 
-- `lib/agent.ts`: agent workflow and all actions (gap detection, requests, reply handling, verification, approval, rejection, rule changes)
-- `lib/llm.ts`: Claude / RunAnywhere calls and fallbacks
-- `lib/seed.ts`: California HCO checklist (for demo use; verify against official requirements) and sample data
-- `lib/db.ts`: `load()`/`save()` for the whole store and `writeUpload()`/`readUpload()` for photos, backed by Supabase when configured (`supabase/migrations`) or local files
-- `scripts/seed-supabase.ts`: copies the JSON store into Supabase and checks the round trip
-- `components/ui.tsx`: TSX port of the design system reference components
-- `app/tokens.css`, `app/components.css`: tokens and component CSS copied from `/design-system`
-- `scripts/make-samples.mjs`: generates sample document images (Playwright)
+With `SUPABASE_URL` and `SUPABASE_SECRET_KEY` set, the app stores its data in Supabase tables. Uploaded photos go to a private `uploads` Storage bucket. The secret key is only used on the server. Every table has RLS turned on with no policies, and files are served through `/api/files`.
 
-## Principles
+```bash
+npx supabase link --project-ref <your-project-ref>
+npx supabase db push      # creates the tables and bucket from supabase/migrations
+npm run db:seed           # copies data/db.json (or the sample data) into Supabase
+```
 
-- The approve button stays disabled until a human has confirmed every field. The agent never approves a record on its own.
-- AI-extracted values and SMS reply values use the blue (agent) style; only human-verified values are green.
-- Background checks (Live Scan) are never requested over SMS. Sensitive identifiers are never asked for by text.
-- Original documents and previous submissions are kept, never deleted.
+With Supabase on, **Reset demo data** resets the Supabase tables. `npm run reset` only deletes the local JSON file.
+
+## Project structure
+
+| Path | What it does |
+| --- | --- |
+| `lib/agent.ts` | Agent workflow and every action: gap detection, requests, replies, verification, approval, rejection, rule changes |
+| `lib/llm.ts` | Claude and RunAnywhere calls with fallbacks |
+| `lib/db.ts` | Storage for data (`load()`/`save()`) and uploads (`writeUpload()`/`readUpload()`), in Supabase or local files |
+| `lib/seed.ts` | Requirement checklist and sample data |
+| `app/` | Next.js pages (dashboard, caregiver detail, audit trail, rules) and API routes |
+| `components/` | UI components and the client data hook |
+| `supabase/migrations/` | Postgres tables and the Storage bucket |
+| `scripts/seed-supabase.ts` | Copies the local store into Supabase and checks the round trip |
+| `scripts/make-samples.mjs` | Generates the sample document images with Playwright |
+
+## Design principles
+
+- **A person approves every record.** The approve button stays off until a person has verified every field. The agent never approves on its own.
+- **AI values look different from verified ones.** Values from AI extraction or SMS replies are shown in blue. Only values a person has verified turn green.
+- **No sensitive data over SMS.** Background checks (Live Scan) are handled by staff, and the agent never asks for sensitive identifiers by text.
+- **Nothing is overwritten.** Original documents and earlier submissions are kept.
+
+## Disclaimer
+
+The requirement checklist in `lib/seed.ts` is a simplified demo version. Check it against current California Home Care Services Bureau requirements before using it for real compliance work. All people, phone numbers and documents in the sample data are fictional.
