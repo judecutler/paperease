@@ -62,6 +62,7 @@ Everything is optional. Copy `.env.example` to `.env.local` and fill in what you
 | `RUNANYWHERE_BASE_URL`, `RUNANYWHERE_API_KEY`, `RUNANYWHERE_MODEL` | Follow-up question copy through RunAnywhere (OpenAI-compatible) |
 | `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | Store data and uploads in Supabase instead of local files |
 | `CRON_SECRET` | Protects `/api/cron`, the daily sweep endpoint. Required in production |
+| `REGISTRY_PROVIDER` | California HCA registry check: `demo` (default) or `manual` |
 | `CARELOOP_DATA_DIR` | Where the local JSON store and uploads live (default `./data`) |
 
 ### AI
@@ -100,6 +101,18 @@ npm run db:seed           # copies data/db.json (or the sample data) into Supaba
 
 With Supabase on, **Reset demo data** resets the Supabase tables. `npm run reset` only deletes the local JSON file.
 
+## California HCA registry check
+
+When a Home Care Aide registration is submitted, the agent looks the aide up on the California Home Care Aide Registry (CDSS) using the caregiver's name on file and the number from the document. The registry search needs first name, last name and PER ID / HCA ID, and returns one of 8 statuses.
+
+- `REGISTERED` and `REGISTERED*` (registered with an exemption) pass. `REGISTERED-PENDING REVIEW`, `PENDING`, `CLOSED`, `DENIED`, `FORFEITED` and `REVOKED` stop the record and escalate it to staff. No match (a misread number, or a name that disagrees with the registry) also escalates.
+- Approve stays disabled until the registry check passes, on top of every field being verified. If staff correct the number, the check re-runs and releases or stops the record.
+- Choose a provider with `REGISTRY_PROVIDER`: `demo` (default; a built-in sample registry) or `manual` (staff search the [CDSS registry](https://www.ccld.dss.ca.gov/hcsregistry/registrysearch.aspx) and record what it shows).
+- In demo mode, correct a record's registration number to try each outcome: `DEMO-EXEMPT`, `DEMO-REVIEW`, `DEMO-PENDING`, `DEMO-CLOSED`, `DEMO-DENIED`, `DEMO-FORFEITED`, `DEMO-REVOKED` (any name), or `ZZZ99999` for no match.
+- There is no provider that calls the CDSS website. It has no documented API, its Conditions of Use were not reviewed, and the ID format is not published, so ID validation is deliberately loose. Get CDSS's OK before automating (HCSB@dss.ca.gov).
+- Supabase: run `supabase/migrations/20261017000005_registry_check.sql` (adds `submissions.registry_check`).
+- `npm test` runs the registry and agent-flow tests.
+
 ## Project structure
 
 | Path | What it does |
@@ -107,10 +120,12 @@ With Supabase on, **Reset demo data** resets the Supabase tables. `npm run reset
 | `lib/agent.ts` | Agent workflow and every action: gap detection, requests, replies, verification, approval, rejection, rule changes |
 | `lib/llm.ts` | Claude and RunAnywhere calls with fallbacks |
 | `lib/db.ts` | Storage for data (`load()`/`save()`) and uploads (`writeUpload()`/`readUpload()`), in Supabase or local files |
+| `lib/registry.ts`, `lib/registry-providers.ts` | California HCA registry check: status rules, demo and manual providers |
 | `lib/seed.ts` | Requirement checklist and sample data |
 | `app/` | Next.js pages (dashboard, caregiver detail, audit trail, rules) and API routes, including `api/cron` for the daily sweep |
 | `components/` | UI components and the client data hook |
 | `supabase/migrations/` | Postgres tables and the Storage bucket |
+| `tests/` | `npm test`: registry rules and agent-flow tests |
 | `scripts/seed-supabase.ts` | Copies the local store into Supabase and checks the round trip |
 | `scripts/make-samples.mjs` | Generates the sample document images with Playwright |
 

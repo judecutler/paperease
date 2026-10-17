@@ -3,7 +3,10 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Shell } from '@/components/Shell';
 import { ApprovalBar, AuditTrail, Button, EscalationNotice, ExtractedField, SmsThread, StatusBadge } from '@/components/ui';
+import { RegistryCheckCard } from '@/components/RegistryCheck';
 import { dateLabel, timeLabel, useCareLoop } from '@/components/useCareLoop';
+import { approvalBlocker, needsRegistryCheck } from '@/lib/registry';
+import type { Payload } from '@/lib/payload';
 import type { ExtractedFieldValue, RequirementState, RequirementType, Submission } from '@/lib/types';
 
 const unverified = (s: Submission) =>
@@ -69,9 +72,12 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
             <ReviewPanel
               key={`${selState.requirementId}-${sub?.id}`}
               reqName={db.rules.requirements.find((r) => r.id === selState.requirementId)!.name}
+              reqId={selState.requirementId}
+              registry={data.registry}
               state={selState}
               sub={sub}
               firstName={cg.firstName}
+              cgName={cg.name}
               busy={busy}
               act={act}
             />
@@ -128,7 +134,7 @@ function RequirementRow({ s, req, selected, busy, onSelect, act }: { s: Requirem
   );
 }
 
-function ReviewPanel({ reqName, state, sub, firstName, busy, act }: { reqName: string; state: RequirementState; sub?: Submission; firstName: string; busy: boolean; act: Act }) {
+function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, busy, act }: { reqName: string; reqId: string; registry: Payload['registry']; state: RequirementState; sub?: Submission; firstName: string; cgName: string; busy: boolean; act: Act }) {
   if (!sub || (sub.state === 'collecting' && sub.files.length === 0)) {
     return (
       <section className="card">
@@ -148,6 +154,8 @@ function ReviewPanel({ reqName, state, sub, firstName, busy, act }: { reqName: s
   }
   const n = unverified(sub);
   const locked = sub.state === 'approved' || sub.state === 'rejected';
+  const checksRegistry = needsRegistryCheck(reqId);
+  const blocker = checksRegistry && !locked ? approvalBlocker(sub.registryCheck) : null;
   return (
     <section className="card stack">
       <div className="card-head" style={{ marginBottom: 0 }}>
@@ -196,9 +204,12 @@ function ReviewPanel({ reqName, state, sub, firstName, busy, act }: { reqName: s
         </div>
       </div>
 
+      {checksRegistry && <RegistryCheckCard sub={sub} cgName={cgName} registry={registry} locked={locked} busy={busy} act={act} />}
+
       {!locked && sub.state !== 'collecting' && (
         <ApprovalBar
           unverified={n}
+          blocker={blocker}
           busy={busy}
           note={n > 0 ? 'Check each value against the original, then verify or correct it.' : undefined}
           onApprove={() => act({ type: 'approve', submissionId: sub.id })}
