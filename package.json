@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
     "reset": "node -e \"require('fs').rmSync('data/db.json',{force:true})\"",
     "db:seed": "tsx --env-file=.env.local scripts/seed-supabase.ts"
   },

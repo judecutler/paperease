@@ -90,6 +90,35 @@ export interface Submission {
   followUps: number;
   /** id of the record this replaced, so versions are kept */
   supersedes?: string;
+  /** result of looking the aide up on the California HCA registry (hca_registration only) */
+  registryCheck?: RegistryCheck;
+}
+
+/** Status values the CDSS Home Care Aide Registry shows (see the registry's Status Definitions page). */
+export type RegistryStatus =
+  | 'REGISTERED'
+  | 'REGISTERED*'
+  | 'REGISTERED-PENDING REVIEW'
+  | 'PENDING'
+  | 'CLOSED'
+  | 'DENIED'
+  | 'FORFEITED'
+  | 'REVOKED';
+
+export interface RegistryCheck {
+  /** found: the registry returned a record; not-found: no match (or the number was not searchable); unavailable: no lookup was possible */
+  outcome: 'found' | 'not-found' | 'unavailable';
+  status?: RegistryStatus;
+  /** demo: built-in sample registry; manual: a person looked it up and recorded the result */
+  by: 'demo' | 'manual';
+  checkedAt: string;
+  /** the name the registry was searched with (the caregiver on file, not the name on the document) */
+  searchedName: string;
+  /** last characters only, so the full ID is not repeated in logs */
+  perIdMasked: string;
+  note?: string;
+  /** who recorded the result, for manual checks */
+  checkedBy?: string;
 }
 
 export interface RequirementState {

@@ -177,6 +177,7 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
       escalation: opt(s.escalation),
       followUps: s.follow_ups,
       supersedes: opt(s.supersedes),
+      registryCheck: opt(s.registry_check),
     })),
     messages: msgs.map((m): SmsMessage => ({
       id: m.id,
@@ -250,6 +251,7 @@ async function saveSupabase(sb: SupabaseClient, db: Db) {
     escalation: s.escalation ?? null,
     follow_ups: s.followUps,
     supersedes: s.supersedes ?? null,
+    registry_check: s.registryCheck ?? null,
     created_at: s.createdAt,
   })));
   await Promise.all([

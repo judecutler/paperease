@@ -98,18 +98,19 @@ export function ExtractedField(props: {
   );
 }
 
-export function ApprovalBar(props: { unverified?: number; note?: string; busy?: boolean; onApprove?: () => void; onRequest?: () => void; onReject?: () => void }) {
+export function ApprovalBar(props: { unverified?: number; note?: string; /** a reason approval is held even when every field is verified */ blocker?: string | null; busy?: boolean; onApprove?: () => void; onRequest?: () => void; onReject?: () => void }) {
   const n = props.unverified || 0;
+  const held = !!props.blocker;
   return (
     <div className="cl-approval" role="region" aria-label="Approval">
       <div className="cl-approval-text">
-        <strong>{n > 0 ? `Verify ${n} field${n > 1 ? 's' : ''} to approve` : 'Ready for your approval'}</strong>
-        <span className="cl-muted cl-small">{props.note || 'CareLoop never approves a record on its own.'}</span>
+        <strong>{n > 0 ? `Verify ${n} field${n > 1 ? 's' : ''} to approve` : held ? 'Approval is on hold' : 'Ready for your approval'}</strong>
+        <span className="cl-muted cl-small">{props.note || (n === 0 && props.blocker) || 'CareLoop never approves a record on its own.'}</span>
       </div>
       <div className="cl-approval-actions">
         <Button variant="quiet" onClick={props.onReject} disabled={props.busy}>Reject</Button>
         <Button variant="secondary" icon="loop" onClick={props.onRequest} disabled={props.busy}>Request another document</Button>
-        <Button variant="primary" icon="check" disabled={n > 0 || props.busy} onClick={props.onApprove}>Approve record</Button>
+        <Button variant="primary" icon="check" disabled={n > 0 || held || props.busy} onClick={props.onApprove}>Approve record</Button>
       </div>
     </div>
   );
