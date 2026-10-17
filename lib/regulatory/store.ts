@@ -33,7 +33,7 @@ export async function supabase(endpoint: string, init: RequestInit = {}) {
     const body = await res.json().catch(() => ({}));
     if (["PGRST205", "PGRST202", "42P01", "42883"].includes(body.code))
       throw new Error(
-        "Regulatory migration required: apply supabase/migrations/202610170001_regulatory.sql.",
+        "Regulatory migration required: apply supabase/migrations/20261017000007_regulatory.sql.",
       );
     throw new Error(
       `Supabase request failed (${res.status}; ${typeof body.code === "string" ? body.code : "unknown"}).`,

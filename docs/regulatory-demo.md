@@ -26,7 +26,7 @@ Use **Reset guided demo** to repeat the presentation. The original dashboard and
 
 ## Live integration
 
-Run `npm run dev` without local-demo mode to use Supabase. The additive migration `supabase/migrations/202610170001_regulatory.sql` has been applied to the configured project. Do not run the old `supabase/schema.sql` over the team's existing database.
+Run `npm run dev` without local-demo mode to use Supabase. The additive migration `supabase/migrations/20261017000007_regulatory.sql` has been applied to the configured project. Do not run the old `supabase/schema.sql` over the team's existing database.
 
 Sign in with an application user from **Supabase Authentication**, not the Supabase dashboard account. The first sign-in can create that user's private regulatory workspace. An administrator can add teammates to the same agency through `reg_memberships`; never share the project's secret key in the browser.
 
@@ -76,7 +76,7 @@ Stop the worker to pause new monitoring. Revert the feature branch/UI to remove 
 
 ## Worker accounts and alerts
 
-The additive migration `202610170002_worker_inbox.sql` creates `reg_worker_memberships`. A trusted administrator maps a Supabase Auth user ID to one agency UUID and worker profile ID. The worker endpoint ignores user-supplied worker IDs in hosted mode and uses that mapping. Demo mode permits selecting the fictional worker for presentation.
+The additive migration `20261017000008_worker_inbox.sql` creates `reg_worker_memberships`. A trusted administrator maps a Supabase Auth user ID to one agency UUID and worker profile ID. The worker endpoint ignores user-supplied worker IDs in hosted mode and uses that mapping. Demo mode permits selecting the fictional worker for presentation.
 
 - `GET /api/regulatory/alerts`: authenticated agency unread alert count.
 - `GET /api/regulatory/worker-inbox`: current worker's messages only.
