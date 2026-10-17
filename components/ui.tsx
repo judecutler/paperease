@@ -63,14 +63,15 @@ export function ExtractedField(props: {
   confidence?: number;
   sourceRef?: string;
   verifiedBy?: string;
-  missing?: boolean;
+  /** true: the AI did not find it on the document; a string: why the value is still empty, e.g. for staff entry */
+  missing?: boolean | string;
   children?: React.ReactNode;
 }) {
   const source = props.source || 'ai';
   const unchecked = source === 'ai' || source === 'caregiver';
   const low = unchecked && typeof props.confidence === 'number' && props.confidence < 0.8;
   let meta: React.ReactNode;
-  if (props.missing) meta = <span className="cl-field-tag cl-tone-attention"><Icon name="flag" />Not found on document</span>;
+  if (props.missing) meta = <span className="cl-field-tag cl-tone-attention"><Icon name="flag" />{typeof props.missing === 'string' ? props.missing : 'Not found on document'}</span>;
   else if (source === 'verified') meta = <span className="cl-field-tag cl-tone-pine"><Icon name="check" />Verified{props.verifiedBy ? ` by ${props.verifiedBy}` : ''}</span>;
   else if (source === 'edited') meta = <span className="cl-field-tag cl-tone-pine"><Icon name="check" />Corrected{props.verifiedBy ? ` by ${props.verifiedBy}` : ''}</span>;
   else
@@ -110,7 +111,7 @@ export function ApprovalBar(props: { unverified?: number; note?: string; /** a r
       </div>
       <div className="cl-approval-actions">
         <Button variant="quiet" onClick={props.onReject} disabled={props.busy}>Reject</Button>
-        <Button variant="secondary" icon="loop" onClick={props.onRequest} disabled={props.busy}>Request another document</Button>
+        {props.onRequest && <Button variant="secondary" icon="loop" onClick={props.onRequest} disabled={props.busy}>Request another document</Button>}
         <Button variant="primary" icon="check" disabled={n > 0 || held || props.busy} onClick={props.onApprove}>Approve record</Button>
       </div>
     </div>

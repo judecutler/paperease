@@ -19,6 +19,8 @@ export type Action =
   | { type: 'approve'; submissionId: string }
   | { type: 'reject'; submissionId: string; reason?: string }
   | { type: 'request-another'; submissionId: string }
+  | { type: 'staff-record'; caregiverId: string; requirementId: string; upload?: SubmissionFile }
+  | { type: 'attach-file'; submissionId: string; upload: SubmissionFile }
   | { type: 'check-registry'; submissionId: string }
   | { type: 'record-registry-check'; submissionId: string; result: RegistryStatus | 'NOT_FOUND' }
   | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es' }
@@ -421,6 +423,24 @@ async function sweep(c: Ctx, trigger: 'schedule' | 'admin') {
   });
 }
 
+/** adds a staff-supplied document; with AI reading on, it fills fields that are still empty */
+async function attachToRecord(c: Ctx, sub: Submission, req: RequirementType, file: SubmissionFile) {
+  sub.files.push(file);
+  c.log({ caregiverId: sub.caregiverId, requirementId: req.id, actor: 'admin', who: c.admin, action: 'attached a document', detail: file.name });
+  if (!file.mime.startsWith('image/')) return;
+  const ex = await extractDocument(req, file.url);
+  if (ex.by !== 'claude' || !ex.readable || !ex.matchesRequirement) return;
+  let filled = 0;
+  for (const f of sub.fields) {
+    const got = ex.fields[f.key];
+    if (f.value !== null || !got?.value) continue;
+    Object.assign(f, { value: got.value, source: 'ai', confidence: got.confidence, sourceRef: `${file.name} · ${got.sourceRef ?? 'p.1'}` });
+    filled++;
+  }
+  sub.extractedBy = 'claude';
+  c.log({ caregiverId: sub.caregiverId, requirementId: req.id, actor: 'agent', action: `read ${filled} field${filled === 1 ? '' : 's'} from the attached document`, detail: 'Each value still needs a person to verify it.' });
+}
+
 export async function run(action: Action, opts: { origin?: string; admin?: string; db?: Db } = {}): Promise<Db> {
   // opts.db: a regulatory workspace's store, which cannot be reset or grow caregivers from here
   if (opts.db && ['reset', 'add-caregiver'].includes(action.type)) throw new Error('Use regulatory onboarding to manage this workspace.');
@@ -469,7 +489,7 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
         const before = f.value;
         f.value = action.value.trim() || null;
         f.source = 'edited';
-        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: c.admin, action: `corrected ${f.label.toLowerCase()}`, detail: `${before ?? 'empty'} → ${f.value ?? 'empty'}` });
+        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: c.admin, action: `${before === null ? 'entered' : 'corrected'} ${f.label.toLowerCase()}`, detail: before === null ? f.value ?? 'empty' : `${before} → ${f.value ?? 'empty'}` });
       } else {
         if (f.value === null) throw new Error('Nothing to verify: enter a value first.');
         f.source = 'verified';
@@ -554,6 +574,9 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
       const cg = c.caregiver(sub.caregiverId);
       const req = c.req(sub.requirementId);
       const state = c.state(sub.caregiverId, sub.requirementId);
+      // a staff-only document (background check) or a caregiver who cannot be texted is never asked over SMS
+      if (!req.smsCollectible) throw new Error(`${req.name} is collected by staff, not over SMS. Use Add record instead.`);
+      if (!cg.smsConsent || cg.optedOut) throw new Error(`${cg.name} cannot be texted. Enter the document yourself instead.`);
       sub.state = 'rejected';
       const next: Submission = { id: newId('sub'), caregiverId: cg.id, requirementId: req.id, files: [], fields: [], extractedBy: 'none', createdAt: now(), state: 'collecting', followUps: 0, supersedes: sub.id };
       db.submissions.push(next);
@@ -563,6 +586,35 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
       c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: c.admin, action: 'requested another document' });
       await c.sms('request-another', cg, req);
       c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent an SMS request' });
+      break;
+    }
+    case 'staff-record': {
+      // staff enter a document themselves: a background check, a paper copy handed in, or after an opt-out (PRD: missing -> processing)
+      const cg = c.caregiver(action.caregiverId);
+      const req = c.req(action.requirementId);
+      const state = c.state(cg.id, req.id);
+      if (state.status === 'pending-review') throw new Error('There is already a record waiting for review. Review or reject it first.');
+      if (state.status === 'approved') throw new Error(`${req.name} is already approved.`);
+      if (state.openSubmissionId) {
+        const old = c.sub(state.openSubmissionId);
+        if (old.state !== 'approved') old.state = 'rejected';
+      }
+      const sub: Submission = {
+        id: newId('sub'), caregiverId: cg.id, requirementId: req.id, files: [], extractedBy: 'none', createdAt: now(), state: 'ready', followUps: 0, supersedes: state.openSubmissionId,
+        fields: req.fields.map((f) => ({ key: f.key, label: f.label, required: f.required, value: null, source: 'edited' })),
+      };
+      db.submissions.push(sub);
+      state.openSubmissionId = sub.id;
+      state.status = 'pending-review';
+      state.explanation = `${c.admin} is entering this record. Fill in and verify each field, then approve.`;
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: c.admin, action: 'started a record by hand', detail: action.upload ? action.upload.name : 'No document attached yet.' });
+      if (action.upload) await attachToRecord(c, sub, req, action.upload);
+      break;
+    }
+    case 'attach-file': {
+      const sub = c.sub(action.submissionId);
+      if (sub.state === 'approved' || sub.state === 'rejected') throw new Error('This record is closed. Start a new one to add a document.');
+      await attachToRecord(c, sub, c.req(sub.requirementId), action.upload);
       break;
     }
     case 'add-caregiver': {

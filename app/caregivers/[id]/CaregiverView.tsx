@@ -68,7 +68,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
             </div>
             <div className="reqs">
               {states.map((s) => (
-                <RequirementRow key={s.requirementId} s={s} req={db.rules.requirements.find((r) => r.id === s.requirementId)!} selected={s.requirementId === selected} busy={busy} onSelect={() => setSelected(s.requirementId)} act={act} />
+                <RequirementRow key={s.requirementId} s={s} req={db.rules.requirements.find((r) => r.id === s.requirementId)!} canText={cg.smsConsent && !cg.optedOut} selected={s.requirementId === selected} busy={busy} onSelect={() => setSelected(s.requirementId)} act={act} />
               ))}
             </div>
           </section>
@@ -76,8 +76,8 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
           {selState && (
             <ReviewPanel
               key={`${selState.requirementId}-${sub?.id}`}
-              reqName={db.rules.requirements.find((r) => r.id === selState.requirementId)!.name}
-              reqId={selState.requirementId}
+              req={db.rules.requirements.find((r) => r.id === selState.requirementId)!}
+              canText={cg.smsConsent && !cg.optedOut}
               registry={data.registry}
               state={selState}
               sub={sub}
@@ -105,7 +105,9 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
 
 type Act = ReturnType<typeof usePaperEase>['act'];
 
-function RequirementRow({ s, req, selected, busy, onSelect, act }: { s: RequirementState; req: RequirementType; selected: boolean; busy: boolean; onSelect: () => void; act: Act }) {
+function RequirementRow({ s, req, canText, selected, busy, onSelect, act }: { s: RequirementState; req: RequirementType; canText: boolean; selected: boolean; busy: boolean; onSelect: () => void; act: Act }) {
+  // staff enter it themselves when the agent cannot collect it: a background check, or a caregiver who cannot be texted
+  const byStaff = !req.smsCollectible || !canText;
   return (
     <div className={`req-row${selected ? ' selected' : ''}`}>
       <div>
@@ -117,12 +119,16 @@ function RequirementRow({ s, req, selected, busy, onSelect, act }: { s: Requirem
       </div>
       <div className="req-side">
         <StatusBadge status={s.status} />
-        {(s.status === 'missing' || s.status === 'expiring') && req.smsCollectible && (
+        {(s.status === 'missing' || s.status === 'expiring') && !byStaff && (
           <Button size="sm" icon="arrow" disabled={busy} onClick={() => act({ type: 'authorize-outreach', caregiverId: s.caregiverId, requirementId: s.requirementId }).then(onSelect)}>
             {s.status === 'expiring' ? 'Ask agent to renew' : 'Ask agent to request'}
           </Button>
         )}
-        {s.status === 'missing' && !req.smsCollectible && <span className="small muted">Staff collects this</span>}
+        {(s.status === 'missing' || s.status === 'expiring') && byStaff && (
+          <Button size="sm" icon="doc" disabled={busy} onClick={() => act({ type: 'staff-record', caregiverId: s.caregiverId, requirementId: s.requirementId }).then(onSelect)}>
+            Add record
+          </Button>
+        )}
         {(s.status === 'requested' || s.status === 'following-up') && (
           <Button size="sm" variant="quiet" icon="loop" disabled={busy} onClick={() => act({ type: 'send-reminder', caregiverId: s.caregiverId, requirementId: s.requirementId })}>
             Send reminder
@@ -139,7 +145,11 @@ function RequirementRow({ s, req, selected, busy, onSelect, act }: { s: Requirem
   );
 }
 
-function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, busy, act }: { reqName: string; reqId: string; registry: Payload['registry']; state: RequirementState; sub?: Submission; firstName: string; cgName: string; busy: boolean; act: Act }) {
+function ReviewPanel({ req, canText, registry, state, sub, firstName, cgName, busy, act }: { req: RequirementType; canText: boolean; registry: Payload['registry']; state: RequirementState; sub?: Submission; firstName: string; cgName: string; busy: boolean; act: Act }) {
+  const reqName = req.name;
+  // only documents the agent may collect by text can be asked for again
+  const canAskAgain = req.smsCollectible && canText;
+  const reqId = req.id;
   if (!sub || (sub.state === 'collecting' && sub.files.length === 0)) {
     return (
       <section className="card">
@@ -151,7 +161,7 @@ function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, 
           {state.status === 'requested' || state.status === 'following-up'
             ? `The agent is waiting for ${firstName} to reply. Use the phone on the right to reply as ${firstName}.`
             : state.status === 'missing'
-              ? 'Nothing submitted yet. Ask the agent to request it.'
+              ? req.smsCollectible ? 'Nothing submitted yet. Ask the agent to request it.' : 'Staff collect this document. Use Add record to enter it.'
               : 'No document on file for this record.'}
         </div>
       </section>
@@ -160,6 +170,7 @@ function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, 
   const n = unverified(sub);
   const locked = sub.state === 'approved' || sub.state === 'rejected';
   const checksRegistry = needsRegistryCheck(reqId);
+  const byHand = sub.extractedBy === 'none' && sub.fields.length > 0 && sub.fields.every((f) => f.source === 'edited' || f.source === 'verified');
   const blocker = checksRegistry && !locked ? approvalBlocker(sub.registryCheck) : null;
   return (
     <section className="card stack">
@@ -167,7 +178,7 @@ function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, 
         <div>
           <h3>{reqName}</h3>
           <p className="small muted">
-            {sub.extractedBy === 'claude' ? 'Extracted by Claude' : sub.extractedBy === 'sample' ? 'Extracted (demo extraction)' : 'Not extracted'} · received {timeLabel(sub.createdAt)}
+            {sub.extractedBy === 'claude' ? 'Extracted by Claude' : sub.extractedBy === 'sample' ? 'Extracted (demo extraction)' : byHand ? 'Entered by hand' : 'Not extracted'} · {byHand ? 'started' : 'received'} {timeLabel(sub.createdAt)}
             {sub.supersedes ? ' · replaces an earlier submission' : ''}
           </p>
         </div>
@@ -176,14 +187,26 @@ function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, 
 
       {sub.state === 'escalated' && (
         <EscalationNotice reason={sub.escalation}>
-          <Button size="sm" icon="loop" disabled={busy} onClick={() => act({ type: 'request-another', submissionId: sub.id })}>Ask {firstName} for another photo</Button>
-          <span className="small muted" style={{ alignSelf: 'center' }}>or fill in the fields below yourself and approve.</span>
+          {canAskAgain && <Button size="sm" icon="loop" disabled={busy} onClick={() => act({ type: 'request-another', submissionId: sub.id })}>Ask {firstName} for another photo</Button>}
+          {sub.fields.length > 0 ? (
+            <span className="small muted" style={{ alignSelf: 'center' }}>or fill in the fields below yourself and approve.</span>
+          ) : (
+            <Button size="sm" icon="doc" disabled={busy} onClick={() => act({ type: 'staff-record', caregiverId: sub.caregiverId, requirementId: sub.requirementId })}>Enter it myself</Button>
+          )}
         </EscalationNotice>
       )}
 
-      {sub.files.length > 0 && (
+      {reqId === 'background_check' && !locked && (
+        <p className="small muted">Record the clearance from the agency's Live Scan or Guardian notice. Attach the clearance notice only, never a full criminal record report.</p>
+      )}
+
+      {(sub.files.length > 0 || !locked) && (
         <div className="stack-sm">
-          <span className="eyebrow">Original documents</span>
+          <div className="docs-head">
+            <span className="eyebrow">Original documents</span>
+            {!locked && <AttachButton subId={sub.id} busy={busy} act={act} />}
+          </div>
+          {sub.files.length === 0 && <p className="small muted">No document attached.</p>}
           <div className="docs">
             {sub.files.map((f, i) => (
               <a key={i} className="doc-thumb" href={f.url} target="_blank" rel="noreferrer">
@@ -218,7 +241,7 @@ function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, 
           busy={busy}
           note={n > 0 ? 'Check each value against the original, then verify or correct it.' : undefined}
           onApprove={() => act({ type: 'approve', submissionId: sub.id })}
-          onRequest={() => act({ type: 'request-another', submissionId: sub.id })}
+          onRequest={canAskAgain ? () => act({ type: 'request-another', submissionId: sub.id }) : undefined}
           onReject={() => {
             const reason = window.prompt('Why are you rejecting this submission?') ?? undefined;
             act({ type: 'reject', submissionId: sub.id, reason });
@@ -230,12 +253,39 @@ function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, 
   );
 }
 
+function AttachButton({ subId, busy, act }: { subId: string; busy: boolean; act: Act }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const attach = async (file: File) => {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      await act({ type: 'attach-file', submissionId: subId, upload: json });
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setUploading(false);
+      if (input.current) input.current.value = '';
+    }
+  };
+  return (
+    <>
+      <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" hidden onChange={(e) => e.target.files?.[0] && attach(e.target.files[0])} />
+      <Button size="sm" variant="quiet" icon="doc" disabled={busy || uploading} onClick={() => input.current?.click()}>{uploading ? 'Uploading…' : 'Attach document'}</Button>
+    </>
+  );
+}
+
 function FieldCard({ f, subId, busy, locked, act }: { f: ExtractedFieldValue; subId: string; busy: boolean; locked: boolean; act: Act }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(f.value ?? '');
   const unchecked = f.source === 'ai' || f.source === 'caregiver';
   return (
-    <ExtractedField label={f.label + (f.required ? '' : ' (optional)')} value={f.value} source={f.source} confidence={f.value ? f.confidence : undefined} sourceRef={f.sourceRef} verifiedBy={f.verifiedBy} missing={f.value === null && unchecked}>
+    <ExtractedField label={f.label + (f.required ? '' : ' (optional)')} value={f.value} source={f.source} confidence={f.value ? f.confidence : undefined} sourceRef={f.sourceRef} verifiedBy={f.verifiedBy} missing={f.value === null && (unchecked || 'Not entered yet')}>
       {!locked && !editing && (
         <div className="field-actions">
           {unchecked && f.value !== null && <Button size="sm" icon="check" disabled={busy} onClick={() => act({ type: 'verify-field', submissionId: subId, key: f.key })}>Verify</Button>}
