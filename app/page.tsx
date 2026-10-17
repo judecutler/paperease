@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Shell } from '@/components/Shell';
 import { Button, Icon, ReadinessMeter, StatusBadge } from '@/components/ui';
 import { dateLabel, timeLabel, usePaperEase } from '@/components/usePaperEase';
-import { staffFor } from '@/lib/staff';
+import { hcoById, staffFor } from '@/lib/staff';
 import type { DocStatus } from '@/lib/types';
 
 const SHORT: Record<string, string> = {
@@ -30,6 +30,7 @@ export default function Dashboard() {
   const { db } = data;
   // signed-in staff see their own caregivers first; demo mode without sign-in shows everyone
   const mine = staffFor(db, data.me?.email);
+  const myHco = hcoById(db, mine?.hcoId);
   const view = scope ?? (mine ? 'mine' : 'all');
   const caregivers = view === 'mine' && mine ? db.caregivers.filter((c) => c.assignedTo === mine.email) : db.caregivers;
   const visible = new Set(caregivers.map((c) => c.id));
@@ -51,7 +52,7 @@ export default function Dashboard() {
     <Shell ai={data.ai} me={data.me} error={error} onDismiss={() => setError(null)}>
       <div className="page-head">
         <div>
-          <div className="eyebrow">{mine ? `${mine.hco.name} · ${mine.name}` : db.agency.name}</div>
+          <div className="eyebrow">{myHco && mine ? `${myHco.name} · ${mine.name}` : db.agency.name}</div>
           <h1>Documentation readiness</h1>
           <p className="muted small" style={{ marginTop: 4 }}>
             {lastSweep ? `Daily sweep last ran ${timeLabel(lastSweep.time)}: ${lastSweep.detail}` : 'The daily sweep has not run yet.'}
@@ -64,6 +65,10 @@ export default function Dashboard() {
           </Button>
         </div>
       </div>
+
+      {data.me && !mine && (
+        <div className="toast" role="note">Your account is not linked to an HCO yet, so there is nothing to show. Ask an administrator to add you to your HCO.</div>
+      )}
 
       <div className="grid-2">
         <section className="card">
@@ -133,7 +138,7 @@ export default function Dashboard() {
             <label>Assigned to
               <select className="input" value={form.assignedTo || mine?.email || ''} onChange={(e) => setForm({ ...form, assignedTo: e.target.value })}>
                 <option value="">Unassigned</option>
-                {db.staff.map((s) => <option key={s.email} value={s.email}>{s.name} · {s.hco.name}</option>)}
+                {db.staff.map((s) => <option key={s.email} value={s.email}>{s.name}{myHco ? '' : ` · ${hcoById(db, s.hcoId)?.name ?? ''}`}</option>)}
               </select>
             </label>
             <Button type="submit" variant="secondary" disabled={busy}>Add and check documents</Button>

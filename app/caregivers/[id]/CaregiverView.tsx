@@ -62,7 +62,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
               Assigned to{' '}
               <select className="input input-sm" value={cg.assignedTo ?? ''} disabled={busy} onChange={(e) => act({ type: 'assign-caregiver', caregiverId: cg.id, email: e.target.value })}>
                 <option value="">Unassigned</option>
-                {db.staff.map((s) => <option key={s.email} value={s.email}>{s.name}</option>)}
+                {db.staff.filter((s) => s.hcoId === cg.hcoId).map((s) => <option key={s.email} value={s.email}>{s.name}</option>)}
               </select>
             </label>
             {hco ? (

@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { DEFAULT_ASSIGNMENTS, DEFAULT_RULES, DEFAULT_STAFF, seedDb } from './seed';
-import type { AuditEvent, Caregiver, Db, RequirementState, RequirementType, SmsMessage, Staff, Submission } from './types';
+import { DEFAULT_ASSIGNMENTS, DEFAULT_HCOS, DEFAULT_RULES, DEFAULT_STAFF, seedDb } from './seed';
+import type { AuditEvent, Caregiver, Db, Hco, RequirementState, RequirementType, SmsMessage, Staff, Submission } from './types';
 
 // The whole store goes through load()/save(), uploads through writeUpload()/readUpload(). With SUPABASE_URL and
 // SUPABASE_SECRET_KEY set they live in Supabase (tables and the uploads bucket in supabase/migrations);
@@ -55,10 +55,17 @@ export async function load(): Promise<Db> {
   return memory;
 }
 
-// stores made before staff existed get the demo staff and the sample caregivers' assignments
+// stores made before HCOs existed get the demo HCOs and staff, and every caregiver gets an HCO:
+// the sample ones per the seed, others their assigned staff member's, else the first HCO
 function withDefaults(db: Db) {
+  if (!db.hcos?.length) db.hcos = DEFAULT_HCOS;
   if (!db.staff?.length) db.staff = DEFAULT_STAFF;
-  for (const c of db.caregivers) c.assignedTo ??= DEFAULT_ASSIGNMENTS[c.id];
+  for (const s of db.staff) s.hcoId ||= DEFAULT_STAFF.find((d) => d.email === s.email)?.hcoId || db.hcos[0].id;
+  for (const c of db.caregivers) {
+    const demo = DEFAULT_ASSIGNMENTS[c.id];
+    c.assignedTo ??= demo?.assignedTo;
+    c.hcoId ||= demo?.hcoId || db.staff.find((s) => s.email === c.assignedTo)?.hcoId || db.hcos[0].id;
+  }
   return db;
 }
 
@@ -123,7 +130,7 @@ const opt = <T>(v: T | null): T | undefined => (v === null ? undefined : v);
 
 async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
   const rows = async (q: PromiseLike<{ data: any[] | null; error: { message: string } | null }>) => check(await q).data ?? [];
-  const [agencies, reqTypes, caregivers, states, subs, msgs, audit, staff] = await Promise.all([
+  const [agencies, reqTypes, caregivers, states, subs, msgs, audit, staff, hcos] = await Promise.all([
     rows(sb.from('agencies').select('*').eq('id', AGENCY_ID)),
     rows(sb.from('requirement_types').select('*').eq('agency_id', AGENCY_ID).order('position')),
     rows(sb.from('caregivers').select('*').eq('agency_id', AGENCY_ID).order('position')),
@@ -132,6 +139,7 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
     rows(sb.from('sms_messages').select('*').order('seq')),
     rows(sb.from('audit_events').select('*').order('seq')),
     rows(sb.from('staff').select('*').eq('agency_id', AGENCY_ID).order('position')),
+    rows(sb.from('hcos').select('*').eq('agency_id', AGENCY_ID).order('position')),
   ]);
   const a = agencies[0];
   if (!a) return null;
@@ -156,7 +164,8 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
         ask: r.ask,
       })),
     },
-    staff: staff.map((s): Staff => ({ email: s.email, name: s.name, hco: s.hco })),
+    hcos: hcos.map((h): Hco => ({ id: h.id, name: h.name, license: h.license, address: h.address, phone: h.phone })),
+    staff: staff.map((s): Staff => ({ email: s.email, name: s.name, hcoId: s.hco_id })),
     caregivers: caregivers.map((c): Caregiver => ({
       id: c.id,
       name: c.name,
@@ -166,6 +175,7 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
       hiredOn: c.hired_on,
       smsConsent: c.sms_consent,
       ...(c.opted_out && { optedOut: true }),
+      ...(c.hco_id && { hcoId: c.hco_id }),
       ...(c.assigned_to && { assignedTo: c.assigned_to }),
     })),
     requirements: states.map((s): RequirementState => ({
@@ -241,7 +251,8 @@ async function saveSupabase(sb: SupabaseClient, db: Db) {
     ask: r.ask,
     fields: r.fields,
   })));
-  await upsert('staff', db.staff.map((m, i) => ({ email: m.email, agency_id: AGENCY_ID, position: i, name: m.name, hco: m.hco })), 'email');
+  await upsert('hcos', db.hcos.map((h, i) => ({ id: h.id, agency_id: AGENCY_ID, position: i, name: h.name, license: h.license, address: h.address, phone: h.phone })));
+  await upsert('staff', db.staff.map((m, i) => ({ email: m.email, agency_id: AGENCY_ID, position: i, name: m.name, hco_id: m.hcoId })), 'email');
   await upsert('caregivers', db.caregivers.map((c, i) => ({
     id: c.id,
     agency_id: AGENCY_ID,
@@ -253,6 +264,7 @@ async function saveSupabase(sb: SupabaseClient, db: Db) {
     hired_on: c.hiredOn,
     sms_consent: c.smsConsent,
     opted_out: c.optedOut ?? false,
+    hco_id: c.hcoId ?? null,
     assigned_to: c.assignedTo ?? null,
   })));
   await upsert('submissions', db.submissions.map((s) => ({

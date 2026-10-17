@@ -61,12 +61,15 @@ export interface Caregiver {
   hiredOn: string;
   smsConsent: boolean;
   optedOut?: boolean;
-  /** email of the staff member responsible for this caregiver */
+  /** the HCO this caregiver works for; staff from other HCOs never see them */
+  hcoId?: string;
+  /** email of the staff member responsible for this caregiver, from the same HCO */
   assignedTo?: string;
 }
 
-/** the home care organization a staff member works for; it is who caregivers hear from */
+/** a home care organization: the unit of data isolation. Staff see only their own HCO's caregivers. */
 export interface Hco {
+  id: string;
   name: string;
   /** California HCO license number */
   license: string;
@@ -74,11 +77,11 @@ export interface Hco {
   phone: string;
 }
 
-/** an admin account's profile: the caregivers assigned to them and their HCO */
+/** an admin account's profile and the HCO they work for */
 export interface Staff {
   email: string;
   name: string;
-  hco: Hco;
+  hcoId: string;
 }
 
 export interface ExtractedFieldValue {
@@ -205,6 +208,7 @@ export interface Db {
   version: number;
   agency: { name: string; admin: string };
   rules: Rules;
+  hcos: Hco[];
   staff: Staff[];
   caregivers: Caregiver[];
   requirements: RequirementState[];

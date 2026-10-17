@@ -1,7 +1,9 @@
 import { load, newId, save, reset } from './db';
 import { draftSms, extractDocument, interpretReply, isOptOut, type SmsKind } from './llm';
 import { linkUrl } from './links';
+import type { Admin } from './adminRole';
 import { staffFor } from './staff';
+import { hcoScope } from './tenancy';
 import { findSample } from './samples';
 import { inspectPhoto, sameCaregiverName, uncheckedPhoto } from './photo-check';
 import { approvalBlocker, findPerIdInText, needsRegistryCheck, REGISTRY_REASON_PREFIX, registryEscalation } from './registry';
@@ -26,7 +28,7 @@ export type Action =
   | { type: 'record-registry-check'; submissionId: string; result: RegistryStatus | 'NOT_FOUND' }
   | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es'; assignedTo?: string }
   | { type: 'assign-caregiver'; caregiverId: string; email: string }
-  | { type: 'update-hco'; email: string; hco: Hco }
+  | { type: 'update-hco'; hcoId: string; hco: Omit<Hco, 'id'> }
   | { type: 'update-rules'; expiringWithinDays: number; minConfidence: number; maxFollowUps: number; autoRequest: boolean; reminderAfterDays: number; maxReminders: number }
   | { type: 'reset' };
 
@@ -40,9 +42,12 @@ class Ctx {
   /** origin is the app's public URL, used to build upload links; without it texts go out with no link.
    *  admin is the signed-in person acting, recorded on decisions; demo mode without login uses the agency's admin. */
   admin: string;
-  constructor(public db: Db, public origin?: string, admin?: string, public adminEmail?: string) {
+  /** hcoId: the signed-in person's HCO; undefined when nothing is scoped (demo without sign-in, cron, upload links) */
+  constructor(public db: Db, public origin?: string, admin?: string, public adminEmail?: string, public hcoId?: string | null) {
     this.admin = admin || db.agency.admin;
   }
+  /** whether this caregiver belongs to the HCO being worked in */
+  visible = (caregiverId: string) => this.hcoId === undefined || this.db.caregivers.find((x) => x.id === caregiverId)?.hcoId === this.hcoId;
   caregiver(id: string) {
     const c = this.db.caregivers.find((x) => x.id === id);
     if (!c) throw new Error(`Unknown caregiver ${id}`);
@@ -88,7 +93,8 @@ function addMonths(dateStr: string, months: number) {
 const daysUntil = (dateStr: string) => Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000);
 const fmt = (dateStr: string) => new Date(dateStr + (dateStr.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-export function detectGaps(db: Db) {
+/** updates every caregiver's statuses; `report` limits which changes are described, so one HCO's log never names another's caregivers */
+export function detectGaps(db: Db, report: (caregiverId: string) => boolean = () => true) {
   const changes: string[] = [];
   for (const s of db.requirements) {
     const req = db.rules.requirements.find((r) => r.id === s.requirementId)!;
@@ -98,9 +104,9 @@ export function detectGaps(db: Db) {
       if (left < 0) {
         s.status = 'missing';
         s.explanation = `Expired on ${fmt(s.expiresOn)}. ${req.rule}`;
-        changes.push(`${cg.name}: ${req.name} expired`);
+        if (report(cg.id)) changes.push(`${cg.name}: ${req.name} expired`);
       } else if (left <= db.rules.expiringWithinDays) {
-        if (s.status !== 'expiring') changes.push(`${cg.name}: ${req.name} expires in ${left} days`);
+        if (s.status !== 'expiring' && report(cg.id)) changes.push(`${cg.name}: ${req.name} expires in ${left} days`);
         s.status = 'expiring';
         s.explanation = `Expires ${fmt(s.expiresOn)} (in ${left} days). Renew before it lapses.`;
       } else if (s.status === 'expiring') {
@@ -375,20 +381,20 @@ const calendarDaysSince = (time: string) => Math.round((Date.parse(now().slice(0
 // remind caregivers who have not replied, and hand requests that stay silent to a person.
 async function sweep(c: Ctx, trigger: 'schedule' | 'admin') {
   const { rules } = c.db;
-  const changes = detectGaps(c.db);
+  const changes = detectGaps(c.db, c.visible);
   let requested = 0;
   let reminded = 0;
   let escalated = 0;
 
   if (rules.autoRequest) {
-    for (const s of c.db.requirements.filter((x) => x.status === 'missing' || x.status === 'expiring')) {
+    for (const s of c.db.requirements.filter((x) => (x.status === 'missing' || x.status === 'expiring') && c.visible(x.caregiverId))) {
       const cg = c.caregiver(s.caregiverId);
       if (!c.req(s.requirementId).smsCollectible || !cg.smsConsent || cg.optedOut) continue;
       if (await authorize(c, s.caregiverId, s.requirementId, 'rule')) requested++;
     }
   }
 
-  for (const s of c.db.requirements.filter((x) => OPEN.includes(x.status) && x.openSubmissionId)) {
+  for (const s of c.db.requirements.filter((x) => OPEN.includes(x.status) && x.openSubmissionId && c.visible(x.caregiverId))) {
     const cg = c.caregiver(s.caregiverId);
     const req = c.req(s.requirementId);
     const sub = c.sub(s.openSubmissionId!);
@@ -426,6 +432,18 @@ async function sweep(c: Ctx, trigger: 'schedule' | 'admin') {
   });
 }
 
+/**
+ * Signed-in staff act only inside their own HCO. Anything aimed at another HCO's caregiver fails as if it did not
+ * exist, so nothing about it leaks. Rules and the daily sweep stay shared; reset would wipe every HCO, so it is off.
+ */
+function checkScope(c: Ctx, action: Action) {
+  if (c.hcoId === null) throw new Error('Your account is not linked to an HCO yet. Ask an administrator to add you to one.');
+  if (action.type === 'reset') throw new Error('Reset demo data would erase every HCO, so it is turned off while sign-in is on.');
+  if (action.type === 'update-hco' && action.hcoId !== c.hcoId) throw new Error('You can only edit your own HCO details.');
+  const cgId = 'caregiverId' in action ? action.caregiverId : 'submissionId' in action ? c.db.submissions.find((s) => s.id === action.submissionId)?.caregiverId : undefined;
+  if (('caregiverId' in action || 'submissionId' in action) && (!cgId || !c.visible(cgId))) throw new Error('Not found.');
+}
+
 /** adds a staff-supplied document; with AI reading on, it fills fields that are still empty */
 async function attachToRecord(c: Ctx, sub: Submission, req: RequirementType, file: SubmissionFile) {
   sub.files.push(file);
@@ -444,16 +462,20 @@ async function attachToRecord(c: Ctx, sub: Submission, req: RequirementType, fil
   c.log({ caregiverId: sub.caregiverId, requirementId: req.id, actor: 'agent', action: `read ${filled} field${filled === 1 ? '' : 's'} from the attached document`, detail: 'Each value still needs a person to verify it.' });
 }
 
-export async function run(action: Action, opts: { origin?: string; admin?: string; adminEmail?: string; db?: Db } = {}): Promise<Db> {
+/** opts.me: the signed-in admin; their name goes on decisions and their HCO bounds what they can touch */
+export async function run(action: Action, opts: { origin?: string; me?: Admin; db?: Db } = {}): Promise<Db> {
   // opts.db: a regulatory workspace's store, which cannot be reset or grow caregivers from here
   if (opts.db && ['reset', 'add-caregiver'].includes(action.type)) throw new Error('Use regulatory onboarding to manage this workspace.');
+  // checked before anything loads: reset erases every HCO, so signed-in staff never get it
+  if (action.type === 'reset' && opts.me) throw new Error('Reset demo data would erase every HCO, so it is turned off while sign-in is on.');
   if (action.type === 'reset') return await reset();
   const db = opts.db || await load();
-  const c = new Ctx(db, opts.origin, opts.admin, opts.adminEmail);
+  const c = new Ctx(db, opts.origin, opts.me?.name, opts.me?.email, hcoScope(db, opts.me));
+  if (c.hcoId !== undefined) checkScope(c, action);
   switch (action.type) {
     case 'run-gap-check': {
-      const changes = detectGaps(db);
-      const open = db.requirements.filter((s) => s.status !== 'approved').length;
+      const changes = detectGaps(db, c.visible);
+      const open = db.requirements.filter((s) => s.status !== 'approved' && c.visible(s.caregiverId)).length;
       c.log({ actor: 'system', action: `ran gap detection: ${open} item${open === 1 ? '' : 's'} need attention`, detail: changes.length ? changes.join('; ') : 'No new changes since the last check.' });
       break;
     }
@@ -465,7 +487,7 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
       break;
     case 'authorize-all': {
       let sent = 0;
-      for (const s of db.requirements.filter((x) => (x.status === 'missing' || x.status === 'expiring') && (!action.caregiverIds || action.caregiverIds.includes(x.caregiverId)))) {
+      for (const s of db.requirements.filter((x) => (x.status === 'missing' || x.status === 'expiring') && c.visible(x.caregiverId) && (!action.caregiverIds || action.caregiverIds.includes(x.caregiverId)))) {
         const cg = c.caregiver(s.caregiverId);
         if (!c.req(s.requirementId).smsCollectible || !cg.smsConsent || cg.optedOut) continue;
         if (await authorize(c, s.caregiverId, s.requirementId)) sent++;
@@ -624,9 +646,11 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
       const name = action.name.trim();
       if (!name) throw new Error('Name is required.');
       const id = newId('cg');
-      // a new caregiver goes to whoever adds them unless they pick someone else
-      const assignedTo = staffFor(db, action.assignedTo ?? c.adminEmail)?.email;
-      db.caregivers.push({ id, name, firstName: name.split(/\s+/)[0], phone: action.phone.trim(), language: 'en', hiredOn: now().slice(0, 10), smsConsent: true, assignedTo });
+      // a new caregiver joins the HCO of whoever adds them and goes to them unless they pick a colleague
+      const hcoId = c.hcoId ?? staffFor(db, action.assignedTo ?? c.adminEmail)?.hcoId ?? db.hcos[0]?.id;
+      const staff = staffFor(db, action.assignedTo ?? c.adminEmail);
+      const assignedTo = staff && staff.hcoId === hcoId ? staff.email : undefined;
+      db.caregivers.push({ id, name, firstName: name.split(/\s+/)[0], phone: action.phone.trim(), language: 'en', hiredOn: now().slice(0, 10), smsConsent: true, hcoId, assignedTo });
       for (const r of db.rules.requirements) {
         db.requirements.push({ caregiverId: id, requirementId: r.id, status: 'missing', explanation: `No ${r.name.toLowerCase()} on file. ${r.rule}` });
       }
@@ -637,20 +661,19 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
     case 'assign-caregiver': {
       const cg = c.caregiver(action.caregiverId);
       const to = action.email ? staffFor(db, action.email) : undefined;
-      if (action.email && !to) throw new Error('Unknown staff member.');
+      // only a colleague from the caregiver's own HCO can look after them
+      if (action.email && (!to || to.hcoId !== cg.hcoId)) throw new Error('Choose someone from this caregiver’s HCO.');
       const from = staffFor(db, cg.assignedTo);
       cg.assignedTo = to?.email;
-      c.log({ caregiverId: cg.id, actor: 'admin', who: c.admin, action: to ? `assigned ${cg.firstName} to ${to.name}` : `unassigned ${cg.firstName}`, detail: [from && `was ${from.name}`, to?.hco.name].filter(Boolean).join(' · ') || undefined });
+      c.log({ caregiverId: cg.id, actor: 'admin', who: c.admin, action: to ? `assigned ${cg.firstName} to ${to.name}` : `unassigned ${cg.firstName}`, detail: from ? `was ${from.name}` : undefined });
       break;
     }
     case 'update-hco': {
-      // with sign-in on, people edit only their own HCO
-      if (c.adminEmail && c.adminEmail.toLowerCase() !== action.email.toLowerCase()) throw new Error('You can only edit your own HCO details.');
-      const hco = { name: action.hco.name.trim(), license: action.hco.license.trim(), address: action.hco.address.trim(), phone: action.hco.phone.trim() };
-      if (!hco.name) throw new Error('The HCO name is required.');
-      const existing = staffFor(db, action.email);
-      if (existing) existing.hco = hco;
-      else db.staff.push({ email: action.email.toLowerCase(), name: c.admin, hco });
+      const hco = db.hcos.find((h) => h.id === action.hcoId);
+      if (!hco) throw new Error('Not found.');
+      const next = { name: action.hco.name.trim(), license: action.hco.license.trim(), address: action.hco.address.trim(), phone: action.hco.phone.trim() };
+      if (!next.name) throw new Error('The HCO name is required.');
+      Object.assign(hco, next);
       c.log({ actor: 'admin', who: c.admin, action: 'updated HCO details', detail: `${hco.name}${hco.license ? ` · license ${hco.license}` : ''}` });
       break;
     }
@@ -661,7 +684,7 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
       db.rules.autoRequest = !!action.autoRequest;
       db.rules.reminderAfterDays = Math.max(1, Math.round(action.reminderAfterDays));
       db.rules.maxReminders = Math.max(0, Math.round(action.maxReminders));
-      const changes = detectGaps(db);
+      const changes = detectGaps(db, c.visible);
       const r = db.rules;
       c.log({ actor: 'admin', who: c.admin, action: 'updated compliance rules', detail: `Expiring window ${r.expiringWithinDays} days, confidence floor ${Math.round(r.minConfidence * 100)}%, ${r.maxFollowUps} follow-ups. Daily sweep: ${r.autoRequest ? 'requests new gaps' : 'waits for an admin to request'}, reminds after ${r.reminderAfterDays} day${r.reminderAfterDays === 1 ? '' : 's'}, escalates after ${r.maxReminders} reminder${r.maxReminders === 1 ? '' : 's'}.${changes.length ? ' ' + changes.join('; ') : ''}` });
       break;

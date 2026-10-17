@@ -11,7 +11,10 @@ export function payload(db: Db, me?: Admin) {
     me: me ?? null,
     ai: aiStatus(),
     registry: registryInfo(),
-    samples: sampleDocs().map(({ id, label, file }) => ({ id, label, file })),
+    // demo samples named for a caregiver, e.g. "(Maria)", only appear where that caregiver is visible
+    samples: sampleDocs()
+      .filter((s) => { const who = s.label.match(/\(([^)]+)\)$/)?.[1]; return !who || db.caregivers.some((c) => c.firstName === who); })
+      .map(({ id, label, file }) => ({ id, label, file })),
   };
 }
 

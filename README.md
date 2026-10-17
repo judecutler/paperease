@@ -101,14 +101,16 @@ npm run admin:add -- dana@example.com "Dana Park"   # prints a password once; ru
 
 Without Supabase (the local JSON demo) there is no sign-in.
 
-### Staff, assignments and HCO details
+### HCOs, staff and assignments
 
-Every caregiver can be assigned to a staff member, and every staff member has their HCO's name, license number, address and phone. Signed in, the dashboard shows **My caregivers** by default, with **All** to see everyone, and the agent's bulk request only covers the caregivers on screen. Caregivers see their assigned staff member's HCO name and phone on the upload page.
+Each HCO (home care organization) is walled off from the others. Staff and caregivers each belong to one HCO, and with sign-in on, staff see and change only their own HCO: its caregivers, their documents, messages, audit trail and uploaded files, its staff and its details. Requests aimed at another HCO's caregiver fail as if the caregiver did not exist (`lib/tenancy.ts`, `checkScope` in `lib/agent.ts`).
 
-- Change who looks after a caregiver from the caregiver's page.
-- Edit your own HCO on the Rules page. With sign-in on, you can only edit your own.
-- New caregivers go to whoever adds them unless you pick someone else.
-- The demo staff (admin1 to admin4@paperease.test) each have a fictional HCO, and the sample caregivers are split between them (`lib/seed.ts`).
+- Within an HCO, every caregiver has a responsible staff member. The dashboard shows **My caregivers** by default and **All** for the whole HCO. Reassign from the caregiver's page, to colleagues only.
+- Edit your HCO's name, license number, address and phone on the Rules page. Its caregivers see the name and phone on the upload page.
+- New caregivers join the HCO of whoever adds them.
+- **Reset demo data** is off while sign-in is on, since it would erase every HCO. Compliance rules and the daily sweep are shared by every HCO in a deployment.
+- An account with no HCO sees nothing. Add staff to an HCO in `lib/seed.ts` or the `staff` table.
+- Demo: **Sunrise Home Care** (admin1 Dana Park, admin2 Alex Kim) and **Golden Bay Home Care** (admin3 Sam Lee, admin4 Jordan Cho), each @paperease.test.
 
 ### Caregiver upload links
 

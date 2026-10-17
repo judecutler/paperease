@@ -4,7 +4,7 @@ import { Shell } from '@/components/Shell';
 import { Button } from '@/components/ui';
 import { usePaperEase } from '@/components/usePaperEase';
 import type { Payload } from '@/lib/payload';
-import { staffFor } from '@/lib/staff';
+import { hcoById, staffFor } from '@/lib/staff';
 import type { Hco } from '@/lib/types';
 
 export default function RulesPage() {
@@ -77,66 +77,66 @@ export default function RulesPage() {
         </div>
       </section>
 
-      <section className="card">
-        <div className="card-head"><h3>Demo data</h3></div>
-        <div className="actions">
-          <Button variant="danger" disabled={busy} onClick={() => confirm('Reset all demo data to the starting state?') && act({ type: 'reset' })}>Reset demo data</Button>
-          <span className="small muted">Restores the six sample caregivers and clears every message and decision.</span>
-        </div>
-      </section>
+      {/* reset would erase every HCO, so it is only offered in the local demo without sign-in */}
+      {!data.me && (
+        <section className="card">
+          <div className="card-head"><h3>Demo data</h3></div>
+          <div className="actions">
+            <Button variant="danger" disabled={busy} onClick={() => confirm('Reset all demo data to the starting state?') && act({ type: 'reset' })}>Reset demo data</Button>
+            <span className="small muted">Restores the six sample caregivers and clears every message and decision.</span>
+          </div>
+        </section>
+      )}
     </Shell>
   );
 }
 
-const EMPTY_HCO: Hco = { name: '', license: '', address: '', phone: '' };
+const EMPTY_HCO: Omit<Hco, 'id'> = { name: '', license: '', address: '', phone: '' };
 
-// Each staff member's HCO: caregivers assigned to them see its name on texts and the upload page.
+// Your HCO's details, which its caregivers see on texts and the upload page. Signed in, you see and edit only your own.
 function HcoCard({ data, busy, act }: { data: Payload; busy: boolean; act: ReturnType<typeof usePaperEase>['act'] }) {
-  const me = data.me;
-  const mine = staffFor(data.db, me?.email);
-  const [hco, setHco] = useState<Hco>(mine?.hco ?? EMPTY_HCO);
+  const { db, me } = data;
+  const mine = hcoById(db, staffFor(db, me?.email)?.hcoId);
+  const [hco, setHco] = useState<Omit<Hco, 'id'>>(mine ?? EMPTY_HCO);
   // refill only when the saved details change, like the rules form
-  const saved = JSON.stringify(mine?.hco ?? null);
-  useEffect(() => setHco(mine?.hco ?? EMPTY_HCO), [saved]); // eslint-disable-line react-hooks/exhaustive-deps
-  const field = (key: keyof Hco, label: string, placeholder: string) => (
+  const saved = JSON.stringify(mine ?? null);
+  useEffect(() => setHco(mine ?? EMPTY_HCO), [saved]); // eslint-disable-line react-hooks/exhaustive-deps
+  const field = (key: keyof typeof hco, label: string, placeholder: string) => (
     <label>{label}<input className="input" value={hco[key]} placeholder={placeholder} onChange={(e) => setHco({ ...hco, [key]: e.target.value })} /></label>
   );
   return (
     <section className="card">
       <div className="card-head">
-        <h3>HCO details</h3>
-        <span className="muted small">Caregivers see their assigned staff member's HCO on texts and the upload page.</span>
+        <h3>{mine ? 'Your HCO' : 'HCOs'}</h3>
+        <span className="muted small">Caregivers see their HCO’s name and phone on texts and the upload page.</span>
       </div>
-      {me ? (
+      {mine ? (
         <form
           className="form-row"
           style={{ marginBottom: 'var(--space-4)' }}
           onSubmit={(e) => {
             e.preventDefault();
-            act({ type: 'update-hco', email: me.email, hco });
+            act({ type: 'update-hco', hcoId: mine.id, hco });
           }}
         >
-          {field('name', 'Your HCO name', 'Sunrise Home Care')}
+          {field('name', 'HCO name', 'Sunrise Home Care')}
           {field('license', 'HCO license number', '194700101')}
           {field('address', 'Address', '1200 Wilshire Blvd, Los Angeles, CA')}
           {field('phone', 'Phone', '(213) 555-0190')}
           <Button type="submit" disabled={busy}>Save HCO</Button>
         </form>
       ) : (
-        <p className="small muted" style={{ marginBottom: 'var(--space-4)' }}>Sign in to edit your own HCO details.</p>
+        <p className="small muted" style={{ marginBottom: 'var(--space-4)' }}>{me ? 'Your account is not linked to an HCO yet.' : 'Demo mode without sign-in shows every HCO. Signed in, staff see only their own.'}</p>
       )}
       <div className="table-wrap">
-        <table className="rules-table" style={{ minWidth: 720 }}>
-          <thead><tr><th>Staff</th><th>HCO</th><th>License</th><th>Address</th><th>Phone</th><th>Caregivers</th></tr></thead>
+        <table className="rules-table" style={{ minWidth: 640 }}>
+          <thead><tr><th>Staff</th>{!mine && <th>HCO</th>}<th>Caregivers</th></tr></thead>
           <tbody>
-            {data.db.staff.map((s) => (
+            {db.staff.map((s) => (
               <tr key={s.email}>
                 <td><strong>{s.name}</strong><div className="small muted">{s.email}</div></td>
-                <td>{s.hco.name}</td>
-                <td className="cl-data">{s.hco.license || 'not set'}</td>
-                <td className="small">{s.hco.address}</td>
-                <td className="cl-data">{s.hco.phone}</td>
-                <td>{data.db.caregivers.filter((c) => c.assignedTo === s.email).length}</td>
+                {!mine && <td>{hcoById(db, s.hcoId)?.name}<div className="small muted cl-data">license {hcoById(db, s.hcoId)?.license || 'not set'}</div></td>}
+                <td>{db.caregivers.filter((c) => c.assignedTo === s.email).length}</td>
               </tr>
             ))}
           </tbody>

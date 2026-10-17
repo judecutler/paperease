@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
-import { readUpload } from '@/lib/db';
+import { load, readUpload } from '@/lib/db';
+import { hcoScope, ownsFile } from '@/lib/tenancy';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +13,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ name: s
   if (me instanceof NextResponse) return me;
   const { name } = await params;
   const file = path.basename(name);
+  // signed-in staff only get files from their own HCO's records and messages
+  if (me) {
+    const db = await load();
+    if (!ownsFile(db, hcoScope(db, me), file)) return new Response('Not found', { status: 404 });
+  }
   const bytes = await readUpload(file);
   if (!bytes) return new Response('Not found', { status: 404 });
   return new Response(new Uint8Array(bytes), {

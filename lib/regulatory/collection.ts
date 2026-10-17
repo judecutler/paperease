@@ -23,6 +23,7 @@ function emptyCollection(name: string): Db {
       maxReminders: 2,
       requirements: [],
     },
+    hcos: [],
     staff: [],
     caregivers: [],
     requirements: [],
