@@ -21,6 +21,7 @@ export type Action =
   | { type: 'record-registry-check'; submissionId: string; result: RegistryStatus | 'NOT_FOUND' }
   | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es' }
   | { type: 'update-rules'; expiringWithinDays: number; minConfidence: number; maxFollowUps: number; autoRequest: boolean; reminderAfterDays: number; maxReminders: number }
+  | { type: 'export-packet'; caregiverId: string }
   | { type: 'reset' };
 
 const OPEN: RequirementState['status'][] = ['requested', 'following-up'];
@@ -475,6 +476,12 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
         detail: `${cg.name}, ID ${sub.registryCheck.perIdMasked}: ${action.result === 'NOT_FOUND' ? 'no match' : action.result}`,
       });
       settleRegistry(sub, c.state(sub.caregiverId, sub.requirementId));
+      break;
+    }
+    case 'export-packet': {
+      // exporting a personnel file is itself an access to personal data, so it is written to the audit trail
+      const cg = c.caregiver(action.caregiverId);
+      c.log({ caregiverId: cg.id, actor: 'admin', who: db.agency.admin, action: 'exported the personnel file', detail: 'Audit packet generated.' });
       break;
     }
     case 'approve': {

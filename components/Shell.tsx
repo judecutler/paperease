@@ -8,6 +8,7 @@ import type { AiStatus } from "@/lib/types";
 const NAV = [
   ["/", "Dashboard"],
   ["/audit", "Audit trail"],
+  ["/readiness", "Audit readiness"],
   ["/rules", "Rules"],
   ["/regulatory", "Regulatory watch"],
 ] as const;

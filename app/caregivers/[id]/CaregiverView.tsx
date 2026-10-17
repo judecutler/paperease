@@ -51,7 +51,10 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
             {cg.optedOut ? 'opted out of texts' : cg.smsConsent ? 'agreed to texts' : 'no SMS consent'}
           </p>
         </div>
-        <div className="muted small">{approvedCount} of {states.length} requirements approved</div>
+        <div className="actions">
+          <span className="muted small">{approvedCount} of {states.length} requirements approved</span>
+          <a className="cl-btn cl-btn-secondary cl-btn-sm" href={`/api/packet/${cg.id}`} target="_blank" rel="noreferrer">Personnel file for audit</a>
+        </div>
       </div>
 
       <div className="grid-cg">
