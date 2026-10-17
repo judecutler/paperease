@@ -18,6 +18,7 @@ const AGENCY_ID = '00000000-0000-0000-0000-000000000001';
 
 let client: SupabaseClient | null | undefined;
 function supabase() {
+  if (process.env.REGULATORY_LOCAL_DEMO === 'true' && process.env.NODE_ENV !== 'production') return null;
   if (client === undefined) {
     const url = process.env.SUPABASE_URL;
     const key = process.env.SUPABASE_SECRET_KEY;

@@ -124,3 +124,11 @@ With Supabase on, **Reset demo data** resets the Supabase tables. `npm run reset
 ## Disclaimer
 
 The requirement checklist in `lib/seed.ts` is a simplified demo version. Check it against current California Home Care Services Bureau requirements before using it for real compliance work. All people, phone numbers and documents in the sample data are fictional.
+
+## Nationwide regulatory watch
+
+The new `/regulatory` workspace adds a 50-state source registry, durable monitoring jobs, RunAnywhere extraction with cited evidence, agency/worker onboarding, rule review and adoption, and a private evidence checklist. The original dashboard remains a separate demonstration.
+
+For a presentation, run `npm run demo`, open `http://127.0.0.1:3000/regulatory`, and click **Reset guided demo**. This clearly labelled simulated policy scenario requires no account or API spend and does not touch Supabase team data.
+
+See [the demo and operational guide](docs/regulatory-demo.md) for live Supabase setup, worker commands, verification, and current coverage boundaries. Use Node 24 or later.

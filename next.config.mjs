@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 /** @type {import('next').NextConfig} */
-const nextConfig = { reactStrictMode: true };
+const nextConfig = { reactStrictMode: true, outputFileTracingRoot: fileURLToPath(new URL('.', import.meta.url)), serverExternalPackages: ['pdfjs-dist'] };
 export default nextConfig;

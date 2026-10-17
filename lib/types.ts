@@ -17,6 +17,7 @@ export interface FieldSpec {
 }
 
 export interface RequirementType {
+  ruleVersionId?: string;
   id: string;
   name: string;
   /** plain-language rule shown under the requirement */

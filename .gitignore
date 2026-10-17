@@ -4,3 +4,8 @@ data
 .env*.local
 next-env.d.ts
 *.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+supabase/.temp/
