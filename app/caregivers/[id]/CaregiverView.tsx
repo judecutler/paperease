@@ -36,6 +36,11 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
     .map((e) => ({ ...e, time: timeLabel(e.time), detail: [db.rules.requirements.find((r) => r.id === e.requirementId)?.name, e.detail].filter(Boolean).join(' · ') }))
     .reverse();
   const approvedCount = states.filter((s) => s.status === 'approved').length;
+  const openRequirements = states
+    .filter((s) => (s.status === 'requested' || s.status === 'following-up') && s.openSubmissionId)
+    .map((s) => db.rules.requirements.find((r) => r.id === s.requirementId)!)
+    .filter((r) => r.smsCollectible)
+    .map((r) => ({ id: r.id, name: r.name }));
 
   return (
     <Shell ai={data.ai} error={error} onDismiss={() => setError(null)}>
@@ -86,7 +91,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
           </section>
         </div>
 
-        <Phone cgId={cg.id} firstName={cg.firstName} name={cg.name} phone={cg.phone} messages={messages} samples={data.samples} busy={busy} act={act} optedOut={!!cg.optedOut} />
+        <Phone cgId={cg.id} firstName={cg.firstName} name={cg.name} phone={cg.phone} messages={messages} samples={data.samples} busy={busy} act={act} optedOut={!!cg.optedOut} canReceivePhotos={cg.smsConsent && !cg.optedOut} selectedRequirementId={selected} openRequirements={openRequirements} />
       </div>
     </Shell>
   );
@@ -243,41 +248,91 @@ function FieldCard({ f, subId, busy, locked, act }: { f: ExtractedFieldValue; su
   );
 }
 
-function Phone({ cgId, firstName, name, phone, messages, samples, busy, act, optedOut }: {
-  cgId: string; firstName: string; name: string; phone: string; optedOut: boolean;
+function Phone({ cgId, firstName, name, phone, messages, samples, busy, act, optedOut, canReceivePhotos, selectedRequirementId, openRequirements }: {
+  cgId: string; firstName: string; name: string; phone: string; optedOut: boolean; canReceivePhotos: boolean;
+  selectedRequirementId?: string; openRequirements: { id: string; name: string }[];
   messages: Parameters<typeof SmsThread>[0]['messages']; samples: { id: string; label: string }[]; busy: boolean; act: Act;
 }) {
   const [text, setText] = useState('');
   const [sample, setSample] = useState((samples.find((s) => s.label.includes(firstName)) ?? samples[0])?.id ?? '');
-  const [uploading, setUploading] = useState(false);
+  const [target, setTarget] = useState(() => openRequirements.some((r) => r.id === selectedRequirementId)
+    ? selectedRequirementId!
+    : openRequirements.length === 1 ? openRequirements[0].id : '');
+  const [phase, setPhase] = useState<{ kind: 'uploading' | 'checking'; fileName: string } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const body = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const openRequirementIds = openRequirements.map((r) => r.id).join('|');
+  const validTarget = openRequirements.some((r) => r.id === target) ? target : undefined;
+  const disabled = busy || phase !== null;
+  const photoDisabled = disabled || !canReceivePhotos || !validTarget;
+
   useEffect(() => {
-    body.current?.scrollTo({ top: body.current.scrollHeight });
+    const ids = openRequirementIds.split('|').filter(Boolean);
+    setTarget((current) => {
+      if (selectedRequirementId && ids.includes(selectedRequirementId)) return selectedRequirementId;
+      if (ids.includes(current)) return current;
+      return ids.length === 1 ? ids[0] : '';
+    });
+  }, [selectedRequirementId, openRequirementIds]);
+
+  useEffect(() => {
+    const container = body.current;
+    if (!container) return;
+    const latestReply = [...messages].reverse().find((message) => message.from === 'caregiver');
+    if (latestReply?.photoCheck) {
+      const cards = container.querySelectorAll<HTMLElement>('[aria-label="Photo check result"]');
+      const latestCard = cards[cards.length - 1];
+      if (latestCard) {
+        const top = latestCard.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+        container.scrollTo({ top: Math.max(0, top - 8) });
+        return;
+      }
+    }
+    container.scrollTo({ top: container.scrollHeight });
   }, [messages.length]);
 
   const sendText = async (t: string) => {
-    if (!t.trim()) return;
-    if (await act({ type: 'caregiver-reply', caregiverId: cgId, text: t })) setText('');
+    if (!t.trim() || disabled || (!canReceivePhotos && t.trim().toUpperCase() !== 'STOP')) return;
+    if (await act({ type: 'caregiver-reply', caregiverId: cgId, requirementId: validTarget, text: t })) setText('');
   };
   const upload = async (file: File) => {
-    setUploading(true);
+    if (photoDisabled) return;
+    setUploadError(null);
+    setPhase({ kind: 'uploading', fileName: file.name });
     try {
       const fd = new FormData();
       fd.append('file', file);
       const res = await fetch('/api/upload', { method: 'POST', body: fd });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
-      await act({ type: 'caregiver-reply', caregiverId: cgId, upload: json, text: text || undefined });
-      setText('');
+      if (!res.ok) throw new Error(json.error || 'The document could not be uploaded. Please try again.');
+      setPhase({ kind: 'checking', fileName: file.name });
+      if (await act({ type: 'caregiver-reply', caregiverId: cgId, requirementId: validTarget, upload: json, text: text || undefined })) {
+        setText('');
+      } else {
+        setUploadError('The document could not be checked. Please try again or ask agency staff for help.');
+      }
     } catch (e) {
-      alert((e as Error).message);
+      setUploadError(e instanceof Error ? e.message : 'The document could not be uploaded. Please try again.');
     } finally {
-      setUploading(false);
+      setPhase(null);
       if (fileInput.current) fileInput.current.value = '';
     }
   };
-  const disabled = busy || uploading;
+  const sendSample = async () => {
+    if (photoDisabled || !sample) return;
+    setUploadError(null);
+    setPhase({ kind: 'checking', fileName: samples.find((s) => s.id === sample)?.label || 'Sample photo' });
+    try {
+      if (await act({ type: 'caregiver-reply', caregiverId: cgId, requirementId: validTarget, sampleId: sample, text: text || undefined })) {
+        setText('');
+      } else {
+        setUploadError('The sample photo could not be checked. Please try again.');
+      }
+    } finally {
+      setPhase(null);
+    }
+  };
 
   return (
     <aside className="phone" aria-label={`Simulated phone for ${name}`}>
@@ -290,25 +345,37 @@ function Phone({ cgId, firstName, name, phone, messages, samples, busy, act, opt
         footer={
           <div className="composer">
             <span className="hint">Reply as {firstName} to drive the demo.{optedOut ? ` ${firstName} opted out, so the agent will not text back.` : ''}</span>
+            <label className="photo-target" htmlFor={`photo-target-${cgId}`}>
+              Check document for
+              <select id={`photo-target-${cgId}`} className="input input-sm" value={validTarget || ''} onChange={(e) => { setTarget(e.target.value); setUploadError(null); }} disabled={disabled || !canReceivePhotos || openRequirements.length === 0}>
+                <option value="">Choose a requested document</option>
+                {openRequirements.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </label>
+            {!canReceivePhotos ? <p className="hint">Photo checks are unavailable without active SMS consent. You can still send STOP.</p>
+              : openRequirements.length === 0 ? <p className="hint">Ask the agent to request a document before sending a photo.</p>
+                : !validTarget && <p className="hint">Choose which requested document this photo should be checked against.</p>}
             <form className="composer-row" onSubmit={(e) => { e.preventDefault(); sendText(text); }}>
-              <input className="input input-sm" placeholder="Text message" value={text} onChange={(e) => setText(e.target.value)} disabled={disabled} />
-              <Button size="sm" type="submit" disabled={disabled || !text.trim()}>Send</Button>
+              <input className="input input-sm" aria-label="Text message" placeholder="Text message" value={text} onChange={(e) => setText(e.target.value)} disabled={disabled} />
+              <Button size="sm" type="submit" disabled={disabled || !text.trim() || (!canReceivePhotos && text.trim().toUpperCase() !== 'STOP')}>Send</Button>
             </form>
             <div className="chips">
               {['It was 5 hours', 'I did 3 hours', 'STOP'].map((t) => (
-                <button key={t} className="chip" disabled={disabled} onClick={() => sendText(t)}>{t}</button>
+                <button key={t} className="chip" disabled={disabled || (!canReceivePhotos && t !== 'STOP')} onClick={() => sendText(t)}>{t}</button>
               ))}
             </div>
             <div className="composer-row">
-              <select className="input input-sm" value={sample} onChange={(e) => setSample(e.target.value)} disabled={disabled} aria-label="Sample document">
+              <select className="input input-sm" value={sample} onChange={(e) => setSample(e.target.value)} disabled={photoDisabled} aria-label="Sample document">
                 {samples.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
-              <Button size="sm" icon="doc" disabled={disabled} onClick={() => act({ type: 'caregiver-reply', caregiverId: cgId, sampleId: sample })}>Send photo</Button>
+              <Button size="sm" icon="doc" disabled={photoDisabled || !sample} onClick={sendSample}>Send sample photo</Button>
             </div>
             <div className="composer-row">
-              <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" hidden onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
-              <Button size="sm" variant="quiet" disabled={disabled} onClick={() => fileInput.current?.click()}>{uploading ? 'Uploading…' : 'Upload your own photo'}</Button>
+              <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" hidden disabled={photoDisabled} onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
+              <Button size="sm" variant="quiet" disabled={photoDisabled} onClick={() => fileInput.current?.click()}>Upload your own photo</Button>
             </div>
+            {phase && <p className="photo-progress" role="status" aria-live="polite">{phase.kind === 'uploading' ? 'Uploading' : 'Checking'} <span>{phase.fileName}</span>…</p>}
+            {uploadError && <p className="photo-error" role="alert">{uploadError}</p>}
           </div>
         }
       />
