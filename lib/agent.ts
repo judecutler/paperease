@@ -1,0 +1,387 @@
+import { load, newId, save, reset } from './db';
+import { draftSms, extractDocument, interpretReply, isOptOut, type SmsKind } from './llm';
+import { findSample } from './samples';
+import type { Actor, Caregiver, Db, ExtractedFieldValue, RequirementState, RequirementType, Submission, SubmissionFile } from './types';
+
+export type Action =
+  | { type: 'run-gap-check' }
+  | { type: 'authorize-outreach'; caregiverId: string; requirementId: string }
+  | { type: 'authorize-all' }
+  | { type: 'send-reminder'; caregiverId: string; requirementId: string }
+  | { type: 'caregiver-reply'; caregiverId: string; text?: string; sampleId?: string; upload?: SubmissionFile }
+  | { type: 'verify-field'; submissionId: string; key: string }
+  | { type: 'edit-field'; submissionId: string; key: string; value: string }
+  | { type: 'approve'; submissionId: string }
+  | { type: 'reject'; submissionId: string; reason?: string }
+  | { type: 'request-another'; submissionId: string }
+  | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es' }
+  | { type: 'update-rules'; expiringWithinDays: number; minConfidence: number; maxFollowUps: number }
+  | { type: 'reset' };
+
+const OPEN: RequirementState['status'][] = ['requested', 'following-up'];
+const now = () => new Date().toISOString();
+
+class Ctx {
+  constructor(public db: Db) {}
+  caregiver(id: string) {
+    const c = this.db.caregivers.find((x) => x.id === id);
+    if (!c) throw new Error(`Unknown caregiver ${id}`);
+    return c;
+  }
+  req(id: string) {
+    const r = this.db.rules.requirements.find((x) => x.id === id);
+    if (!r) throw new Error(`Unknown requirement ${id}`);
+    return r;
+  }
+  state(caregiverId: string, requirementId: string) {
+    const s = this.db.requirements.find((x) => x.caregiverId === caregiverId && x.requirementId === requirementId);
+    if (!s) throw new Error('Unknown requirement state');
+    return s;
+  }
+  sub(id: string) {
+    const s = this.db.submissions.find((x) => x.id === id);
+    if (!s) throw new Error(`Unknown submission ${id}`);
+    return s;
+  }
+  log(e: { caregiverId?: string; requirementId?: string; actor: Actor; who?: string; action: string; detail?: string }) {
+    this.db.audit.push({ id: newId('ev'), time: now(), ...e });
+  }
+  async sms(kind: SmsKind, cg: Caregiver, req: RequirementType, extra: { missingField?: { key: string; label: string }; documentType?: string } = {}) {
+    if (cg.optedOut && kind !== 'opted-out') return;
+    const text = await draftSms(kind, { caregiver: cg, requirement: req, ...extra });
+    this.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text, time: now() });
+    return text;
+  }
+}
+
+/* ---------------- gap detection ---------------- */
+
+function addMonths(dateStr: string, months: number) {
+  const d = new Date(dateStr);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+const daysUntil = (dateStr: string) => Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000);
+const fmt = (dateStr: string) => new Date(dateStr + (dateStr.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+export function detectGaps(db: Db) {
+  const changes: string[] = [];
+  for (const s of db.requirements) {
+    const req = db.rules.requirements.find((r) => r.id === s.requirementId)!;
+    const cg = db.caregivers.find((c) => c.id === s.caregiverId)!;
+    if ((s.status === 'approved' || s.status === 'expiring') && s.expiresOn) {
+      const left = daysUntil(s.expiresOn);
+      if (left < 0) {
+        s.status = 'missing';
+        s.explanation = `Expired on ${fmt(s.expiresOn)}. ${req.rule}`;
+        changes.push(`${cg.name}: ${req.name} expired`);
+      } else if (left <= db.rules.expiringWithinDays) {
+        if (s.status !== 'expiring') changes.push(`${cg.name}: ${req.name} expires in ${left} days`);
+        s.status = 'expiring';
+        s.explanation = `Expires ${fmt(s.expiresOn)} (in ${left} days). Renew before it lapses.`;
+      } else if (s.status === 'expiring') {
+        s.status = 'approved';
+        s.explanation = 'Approved record on file.';
+      }
+    }
+    if (s.status === 'missing' && !req.smsCollectible && !s.explanation.includes('staff')) {
+      s.explanation += ' Collected by agency staff, not over SMS.';
+    }
+  }
+  return changes;
+}
+
+/* ---------------- record evaluation ---------------- */
+
+const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z ]/g, '').trim();
+function sameName(a: string, b: string) {
+  const ta = norm(a).split(/\s+/);
+  const tb = norm(b).split(/\s+/);
+  return ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1];
+}
+
+export function unverifiedCount(sub: Submission) {
+  return sub.fields.filter((f) => (f.value !== null && (f.source === 'ai' || f.source === 'caregiver')) || (f.required && f.value === null)).length;
+}
+
+type Verdict = { kind: 'ready' } | { kind: 'follow-up'; field: ExtractedFieldValue } | { kind: 'escalate'; reason: string };
+
+function evaluate(c: Ctx, sub: Submission, cg: Caregiver, req: RequirementType): Verdict {
+  const minConf = c.db.rules.minConfidence;
+  const name = sub.fields.find((f) => f.key === 'name');
+  if (name?.value && (name.confidence ?? 1) >= minConf && !sameName(name.value, cg.name)) {
+    return { kind: 'escalate', reason: `The document is in the name "${name.value}", which does not match ${cg.name}.` };
+  }
+  const low = sub.fields.find((f) => f.required && f.value !== null && f.source === 'ai' && (f.confidence ?? 1) < minConf);
+  if (low) return { kind: 'escalate', reason: `${low.label} was read at only ${Math.round((low.confidence ?? 0) * 100)}% confidence. The agent did not guess.` };
+  const hours = sub.fields.find((f) => f.key === 'hours');
+  if (req.minHours && hours?.value && Number(hours.value) < req.minHours) {
+    return { kind: 'escalate', reason: `${hours.source === 'caregiver' ? `${cg.firstName} reported` : 'The document shows'} ${hours.value} training hours; this requirement needs at least ${req.minHours}.` };
+  }
+  const missing = sub.fields.find((f) => f.required && f.value === null);
+  if (missing) {
+    if (sub.followUps >= c.db.rules.maxFollowUps) {
+      return { kind: 'escalate', reason: `${missing.label} is still missing after ${sub.followUps} follow-ups.` };
+    }
+    return { kind: 'follow-up', field: missing };
+  }
+  return { kind: 'ready' };
+}
+
+async function applyVerdict(c: Ctx, v: Verdict, sub: Submission, state: RequirementState, cg: Caregiver, req: RequirementType, docType?: string) {
+  if (v.kind === 'ready') {
+    sub.state = 'ready';
+    state.status = 'pending-review';
+    state.explanation = 'Record prepared from the caregiver’s submission. Waiting for a person to verify.';
+    await c.sms('thanks', cg, req);
+    c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'prepared a record for review', detail: `${sub.fields.filter((f) => f.value).length} fields filled, original attached.` });
+  } else if (v.kind === 'follow-up') {
+    sub.state = 'collecting';
+    sub.followUps += 1;
+    state.status = 'following-up';
+    state.explanation = `${v.field.label} not found on what ${cg.firstName} sent. Agent asked a follow-up question.`;
+    await c.sms('follow-up', cg, req, { missingField: { key: v.field.key, label: v.field.label }, documentType: docType });
+    c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'asked a follow-up question', detail: `${v.field.label} missing (follow-up ${sub.followUps} of ${c.db.rules.maxFollowUps}).` });
+  } else {
+    sub.state = 'escalated';
+    sub.escalation = v.reason;
+    state.status = 'escalated';
+    state.explanation = v.reason;
+    await c.sms('escalated', cg, req);
+    c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'escalated to an admin', detail: v.reason });
+  }
+}
+
+/* ---------------- caregiver replies ---------------- */
+
+function openStateFor(c: Ctx, cgId: string) {
+  const open = c.db.requirements.filter((s) => s.caregiverId === cgId && OPEN.includes(s.status) && s.openSubmissionId);
+  // most recently opened request first
+  return open.sort((a, b) => c.sub(b.openSubmissionId!).createdAt.localeCompare(c.sub(a.openSubmissionId!).createdAt))[0];
+}
+
+async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-reply' }>) {
+  const cg = c.caregiver(a.caregiverId);
+  const sample = a.sampleId ? findSample(a.sampleId) : undefined;
+  const file: SubmissionFile | undefined = a.upload ?? (sample ? { name: sample.file.split('/').pop()!, url: sample.file, mime: 'image/png' } : undefined);
+  const text = a.text?.trim();
+  c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'caregiver', text: text || undefined, attachment: file, time: now() });
+
+  if (text && isOptOut(text)) {
+    cg.optedOut = true;
+    c.log({ caregiverId: cg.id, actor: 'caregiver', who: cg.name, action: 'opted out of SMS', detail: `Replied "${text}".` });
+    for (const s of c.db.requirements.filter((x) => x.caregiverId === cg.id && OPEN.includes(x.status))) {
+      s.status = 'escalated';
+      s.explanation = `${cg.firstName} opted out of texts. Staff need to collect this directly.`;
+      if (s.openSubmissionId) Object.assign(c.sub(s.openSubmissionId), { state: 'escalated', escalation: s.explanation });
+    }
+    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: (await draftSms('opted-out', { caregiver: cg, requirement: c.req('tb_test') })), time: now() });
+    return;
+  }
+
+  const state = openStateFor(c, cg.id);
+  c.log({ caregiverId: cg.id, requirementId: state?.requirementId, actor: 'caregiver', who: cg.name, action: file ? 'replied with a photo' : 'replied by text', detail: file ? file.name : `"${text}"` });
+  if (!state) {
+    c.log({ caregiverId: cg.id, actor: 'agent', action: 'escalated an unexpected message', detail: 'No open request for this caregiver. Left for staff.' });
+    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: cg.language === 'es' ? `¡Gracias, ${cg.firstName}! Se lo paso a la oficina.` : `Thanks, ${cg.firstName}! I'll pass this to the office.`, time: now() });
+    return;
+  }
+  const req = c.req(state.requirementId);
+  const sub = c.sub(state.openSubmissionId!);
+
+  if (file) {
+    sub.files.push(file);
+    const ex = await extractDocument(req, file.url, a.sampleId);
+    sub.extractedBy = ex.by === 'none' ? sub.extractedBy : ex.by;
+    if (!ex.readable) {
+      // keep whatever fields we have so the admin can fill them in by hand
+      if (!sub.fields.length) sub.fields = req.fields.map((f) => ({ key: f.key, label: f.label, required: f.required, value: null, source: 'ai' }));
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'could not read the document', detail: ex.note });
+      return applyVerdict(c, { kind: 'escalate', reason: ex.note || 'The document could not be read.' }, sub, state, cg, req);
+    }
+    if (!ex.matchesRequirement) {
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'identified the wrong document', detail: `Looks like a ${ex.documentType}, not ${req.name}.` });
+      sub.followUps += 1;
+      if (sub.followUps > c.db.rules.maxFollowUps) {
+        return applyVerdict(c, { kind: 'escalate', reason: `${cg.firstName} sent the wrong document ${sub.followUps} times.` }, sub, state, cg, req);
+      }
+      state.status = 'following-up';
+      state.explanation = `${cg.firstName} sent a ${ex.documentType}. Agent asked for the right document.`;
+      await c.sms('wrong-doc', cg, req, { documentType: ex.documentType });
+      return;
+    }
+    // merge: new values fill fields that are still empty, so a second document can complete the first
+    const prev = new Map(sub.fields.map((f) => [f.key, f]));
+    sub.fields = req.fields.map((spec) => {
+      const old = prev.get(spec.key);
+      const got = ex.fields[spec.key];
+      if (old?.value) return old;
+      return { key: spec.key, label: spec.label, required: spec.required, value: got?.value ?? null, source: 'ai', confidence: got?.value ? got.confidence : undefined, sourceRef: got?.value ? `${file.name} · ${got.sourceRef ?? 'p.1'}` : undefined };
+    });
+    const filled = sub.fields.filter((f) => f.value).length;
+    c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: `extracted ${filled} of ${sub.fields.length} fields`, detail: [ex.by === 'claude' ? 'Read by Claude.' : 'Demo extraction.', ex.note].filter(Boolean).join(' ') });
+    return applyVerdict(c, evaluate(c, sub, cg, req), sub, state, cg, req, ex.documentType);
+  }
+
+  if (text) {
+    const missing = sub.fields.find((f) => f.required && f.value === null);
+    if (state.status === 'following-up' && missing) {
+      const spec = req.fields.find((f) => f.key === missing.key)!;
+      const got = await interpretReply(text, spec);
+      if (got.value) {
+        Object.assign(missing, { value: got.value, source: 'caregiver', confidence: got.confidence, sourceRef: `SMS reply: "${text.slice(0, 60)}"` });
+        c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: `read ${missing.label.toLowerCase()} from the reply`, detail: `${got.value}. Marked as caregiver-reported until verified.` });
+        return applyVerdict(c, evaluate(c, sub, cg, req), sub, state, cg, req);
+      }
+      return applyVerdict(c, evaluate(c, sub, cg, req), sub, state, cg, req);
+    }
+    await c.sms('reminder', cg, req);
+    c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'asked again for a photo', detail: 'The reply had no document attached.' });
+  }
+}
+
+/* ---------------- admin actions ---------------- */
+
+async function authorize(c: Ctx, caregiverId: string, requirementId: string) {
+  const cg = c.caregiver(caregiverId);
+  const req = c.req(requirementId);
+  const state = c.state(caregiverId, requirementId);
+  if (!req.smsCollectible) throw new Error(`${req.name} is collected by staff, not over SMS.`);
+  if (!cg.smsConsent || cg.optedOut) throw new Error(`${cg.name} has not agreed to receive texts.`);
+  if (OPEN.includes(state.status)) return false;
+  const sub: Submission = { id: newId('sub'), caregiverId, requirementId, files: [], fields: [], extractedBy: 'none', createdAt: now(), state: 'collecting', followUps: 0, supersedes: state.openSubmissionId };
+  if (state.openSubmissionId) {
+    const old = c.sub(state.openSubmissionId);
+    if (old.state !== 'approved') old.state = 'rejected';
+  }
+  c.db.submissions.push(sub);
+  state.openSubmissionId = sub.id;
+  state.status = 'requested';
+  state.explanation = `Agent asked ${cg.firstName} by SMS. Waiting for a reply.`;
+  c.log({ caregiverId, requirementId, actor: 'admin', who: c.db.agency.admin, action: 'authorized outreach' });
+  await c.sms('request', cg, req);
+  c.log({ caregiverId, requirementId, actor: 'agent', action: cg.language === 'es' ? 'sent an SMS request in Spanish' : 'sent an SMS request', detail: cg.phone });
+  return true;
+}
+
+export async function run(action: Action): Promise<Db> {
+  if (action.type === 'reset') return reset();
+  const db = load();
+  const c = new Ctx(db);
+  switch (action.type) {
+    case 'run-gap-check': {
+      const changes = detectGaps(db);
+      const open = db.requirements.filter((s) => s.status !== 'approved').length;
+      c.log({ actor: 'system', action: `ran gap detection: ${open} item${open === 1 ? '' : 's'} need attention`, detail: changes.length ? changes.join('; ') : 'No new changes since the last check.' });
+      break;
+    }
+    case 'authorize-outreach':
+      await authorize(c, action.caregiverId, action.requirementId);
+      break;
+    case 'authorize-all': {
+      let sent = 0;
+      for (const s of db.requirements.filter((x) => x.status === 'missing' || x.status === 'expiring')) {
+        const cg = c.caregiver(s.caregiverId);
+        if (!c.req(s.requirementId).smsCollectible || !cg.smsConsent || cg.optedOut) continue;
+        if (await authorize(c, s.caregiverId, s.requirementId)) sent++;
+      }
+      c.log({ actor: 'admin', who: db.agency.admin, action: `delegated ${sent} gap${sent === 1 ? '' : 's'} to the agent` });
+      break;
+    }
+    case 'send-reminder': {
+      const cg = c.caregiver(action.caregiverId);
+      const req = c.req(action.requirementId);
+      await c.sms('reminder', cg, req);
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent a reminder', detail: `Requested by ${db.agency.admin}.` });
+      break;
+    }
+    case 'caregiver-reply':
+      await caregiverReply(c, action);
+      break;
+    case 'verify-field':
+    case 'edit-field': {
+      const sub = c.sub(action.submissionId);
+      const f = sub.fields.find((x) => x.key === action.key);
+      if (!f) throw new Error('Unknown field');
+      if (action.type === 'edit-field') {
+        const before = f.value;
+        f.value = action.value.trim() || null;
+        f.source = 'edited';
+        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: db.agency.admin, action: `corrected ${f.label.toLowerCase()}`, detail: `${before ?? 'empty'} → ${f.value ?? 'empty'}` });
+      } else {
+        if (f.value === null) throw new Error('Nothing to verify: enter a value first.');
+        f.source = 'verified';
+        c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: db.agency.admin, action: `verified ${f.label.toLowerCase()}`, detail: f.value });
+      }
+      f.verifiedBy = db.agency.admin.split(' ')[0];
+      break;
+    }
+    case 'approve': {
+      const sub = c.sub(action.submissionId);
+      if (unverifiedCount(sub) > 0) throw new Error('Every field must be verified by a person before approval.');
+      const req = c.req(sub.requirementId);
+      const cg = c.caregiver(sub.caregiverId);
+      const state = c.state(sub.caregiverId, sub.requirementId);
+      const val = (k: string) => sub.fields.find((f) => f.key === k)?.value || undefined;
+      const base = val('completion_date') || val('test_date') || val('clearance_date');
+      sub.state = 'approved';
+      state.status = 'approved';
+      state.approvedSubmissionId = sub.id;
+      state.openSubmissionId = undefined;
+      state.expiresOn = val('expiration_date') || (base && req.validMonths ? addMonths(base, req.validMonths) : undefined);
+      state.explanation = `Approved by ${db.agency.admin}.`;
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: db.agency.admin, action: 'approved the record', detail: state.expiresOn ? `Valid until ${fmt(state.expiresOn)}.` : 'No expiry.' });
+      detectGaps(db);
+      await c.sms('approved', cg, req);
+      break;
+    }
+    case 'reject': {
+      const sub = c.sub(action.submissionId);
+      const state = c.state(sub.caregiverId, sub.requirementId);
+      sub.state = 'rejected';
+      state.status = 'missing';
+      state.openSubmissionId = undefined;
+      state.explanation = `Submission rejected by ${db.agency.admin}${action.reason ? `: ${action.reason}` : '.'}`;
+      c.log({ caregiverId: sub.caregiverId, requirementId: sub.requirementId, actor: 'admin', who: db.agency.admin, action: 'rejected the submission', detail: action.reason });
+      break;
+    }
+    case 'request-another': {
+      const sub = c.sub(action.submissionId);
+      const cg = c.caregiver(sub.caregiverId);
+      const req = c.req(sub.requirementId);
+      const state = c.state(sub.caregiverId, sub.requirementId);
+      sub.state = 'rejected';
+      const next: Submission = { id: newId('sub'), caregiverId: cg.id, requirementId: req.id, files: [], fields: [], extractedBy: 'none', createdAt: now(), state: 'collecting', followUps: 0, supersedes: sub.id };
+      db.submissions.push(next);
+      state.openSubmissionId = next.id;
+      state.status = 'requested';
+      state.explanation = `${db.agency.admin} asked for another document. Agent is waiting for ${cg.firstName}.`;
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'admin', who: db.agency.admin, action: 'requested another document' });
+      await c.sms('request-another', cg, req);
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent an SMS request' });
+      break;
+    }
+    case 'add-caregiver': {
+      const name = action.name.trim();
+      if (!name) throw new Error('Name is required.');
+      const id = newId('cg');
+      db.caregivers.push({ id, name, firstName: name.split(/\s+/)[0], phone: action.phone.trim(), language: action.language, hiredOn: now().slice(0, 10), smsConsent: true });
+      for (const r of db.rules.requirements) {
+        db.requirements.push({ caregiverId: id, requirementId: r.id, status: 'missing', explanation: `No ${r.name.toLowerCase()} on file. ${r.rule}` });
+      }
+      detectGaps(db);
+      c.log({ caregiverId: id, actor: 'admin', who: db.agency.admin, action: 'added a caregiver', detail: `${name}, ${db.rules.requirements.length} requirements flagged as missing.` });
+      break;
+    }
+    case 'update-rules': {
+      db.rules.expiringWithinDays = Math.max(1, Math.round(action.expiringWithinDays));
+      db.rules.minConfidence = Math.min(0.99, Math.max(0.1, action.minConfidence));
+      db.rules.maxFollowUps = Math.max(0, Math.round(action.maxFollowUps));
+      const changes = detectGaps(db);
+      c.log({ actor: 'admin', who: db.agency.admin, action: 'updated compliance rules', detail: `Expiring window ${db.rules.expiringWithinDays} days, confidence floor ${Math.round(db.rules.minConfidence * 100)}%, ${db.rules.maxFollowUps} follow-ups.${changes.length ? ' ' + changes.join('; ') : ''}` });
+      break;
+    }
+  }
+  save(db);
+  return db;
+}
