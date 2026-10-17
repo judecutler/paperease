@@ -6,11 +6,12 @@ import { ApprovalBar, AuditTrail, Button, EscalationNotice, ExtractedField, SmsT
 import { RegistryCheckCard } from '@/components/RegistryCheck';
 import { dateLabel, timeLabel, useCareLoop } from '@/components/useCareLoop';
 import { approvalBlocker, needsRegistryCheck } from '@/lib/registry';
+import { isUnconfirmed } from '@/lib/fields';
+import type { Action } from '@/lib/agent';
 import type { Payload } from '@/lib/payload';
 import type { ExtractedFieldValue, RequirementState, RequirementType, Submission } from '@/lib/types';
 
-const unverified = (s: Submission) =>
-  s.fields.filter((f) => (f.value !== null && (f.source === 'ai' || f.source === 'caregiver')) || (f.required && f.value === null)).length;
+const unverified = (s: Submission) => s.fields.filter(isUnconfirmed).length;
 
 export function CaregiverView({ id, initialReq }: { id: string; initialReq?: string }) {
   const { data, busy, error, setError, act } = useCareLoop();
@@ -85,6 +86,8 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
               act={act}
             />
           )}
+
+          <WalletCard cgId={cg.id} firstName={cg.firstName} canText={cg.smsConsent && !cg.optedOut} busy={busy} act={act} />
 
           <section className="card">
             <div className="card-head">
@@ -231,7 +234,7 @@ function ReviewPanel({ reqName, reqId, registry, state, sub, firstName, cgName, 
 function FieldCard({ f, subId, busy, locked, act }: { f: ExtractedFieldValue; subId: string; busy: boolean; locked: boolean; act: Act }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(f.value ?? '');
-  const unchecked = f.source === 'ai' || f.source === 'caregiver';
+  const unchecked = f.source === 'ai' || f.source === 'caregiver' || f.source === 'imported';
   return (
     <ExtractedField label={f.label + (f.required ? '' : ' (optional)')} value={f.value} source={f.source} confidence={f.value ? f.confidence : undefined} sourceRef={f.sourceRef} verifiedBy={f.verifiedBy} missing={f.value === null && unchecked}>
       {!locked && !editing && (
@@ -327,5 +330,25 @@ function Phone({ cgId, firstName, name, phone, messages, samples, busy, act, opt
         }
       />
     </aside>
+  );
+}
+
+function WalletCard({ cgId, firstName, canText, busy, act }: { cgId: string; firstName: string; canText: boolean; busy: boolean; act: (a: Action) => Promise<boolean> }) {
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h3>Credential wallet</h3>
+        <span className="muted small">Records that follow {firstName} between agencies</span>
+      </div>
+      <p className="small muted" style={{ margin: '0 0 var(--space-3)' }}>
+        With {firstName}&apos;s permission by text, confirmed values (not photos) are saved to a wallet, and another agency can pre-fill {firstName}&apos;s file from it.
+        A person there still confirms every field, and the registry is checked again.
+      </p>
+      <div className="actions">
+        <Button size="sm" icon="arrow" disabled={busy || !canText} onClick={() => act({ type: 'wallet-offer-share', caregiverId: cgId })}>Ask to add {firstName}&apos;s records</Button>
+        <Button size="sm" icon="loop" disabled={busy || !canText} onClick={() => act({ type: 'wallet-request', caregiverId: cgId })}>Check for earlier records</Button>
+        <Button size="sm" variant="quiet" disabled={busy} onClick={() => act({ type: 'wallet-withdraw', caregiverId: cgId })}>Remove our records</Button>
+      </div>
+    </section>
   );
 }

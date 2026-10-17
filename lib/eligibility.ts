@@ -1,3 +1,4 @@
+import { isUnconfirmed } from './fields';
 import { assess, needsRegistryCheck } from './registry';
 import type { Db } from './types';
 
@@ -53,7 +54,7 @@ export function checkEligibility(db: Db, input: EligibilityInput, opts: { strict
     const sub = st.approvedSubmissionId ? db.submissions.find((s) => s.id === st.approvedSubmissionId) : undefined;
     evidence[req.id] = sub ? 'verified-record' : 'status-only';
     if (sub) {
-      const open = sub.fields.some((f) => (f.value !== null && (f.source === 'ai' || f.source === 'caregiver')) || (f.required && f.value === null));
+      const open = sub.fields.some(isUnconfirmed);
       if (open) { r('unverified-record', 'The stored record has fields no person confirmed.'); continue; }
       if (needsRegistryCheck(req.id)) {
         if (!sub.registryCheck) { r('registry-unchecked', 'No California registry lookup recorded.'); continue; }

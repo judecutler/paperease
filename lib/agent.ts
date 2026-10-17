@@ -1,6 +1,11 @@
-import { load, newId, save, reset } from './db';
+import { load, newId, readDoc, save, reset, writeDoc } from './db';
 import { draftSms, extractDocument, interpretReply, isOptOut, type SmsKind } from './llm';
 import { findSample } from './samples';
+import { isUnconfirmed } from './fields';
+import {
+  WALLET_KEY, addPending, agencyIdOf, availableFor, demoWallet, emptyWallet, hasPending, holderKey, importCredentials, isNo, isYes, publish, snapshotCredentials, takePending, walletEnabled, walletSms, withdraw,
+  type WalletDoc,
+} from './wallet';
 import { approvalBlocker, findPerIdInText, needsRegistryCheck, REGISTRY_REASON_PREFIX, registryEscalation } from './registry';
 import { checkRegistry, manualRegistryCheck } from './registry-providers';
 import type { Actor, Caregiver, Db, ExtractedFieldValue, RegistryStatus, RequirementState, RequirementType, Submission, SubmissionFile } from './types';
@@ -22,12 +27,17 @@ export type Action =
   | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es' }
   | { type: 'update-rules'; expiringWithinDays: number; minConfidence: number; maxFollowUps: number; autoRequest: boolean; reminderAfterDays: number; maxReminders: number }
   | { type: 'export-packet'; caregiverId: string }
+  | { type: 'wallet-offer-share'; caregiverId: string }
+  | { type: 'wallet-request'; caregiverId: string }
+  | { type: 'wallet-withdraw'; caregiverId: string }
   | { type: 'reset' };
 
 const OPEN: RequirementState['status'][] = ['requested', 'following-up'];
 const now = () => new Date().toISOString();
 
 class Ctx {
+  walletDoc?: WalletDoc;
+  walletDirty = false;
   constructor(public db: Db) {}
   caregiver(id: string) {
     const c = this.db.caregivers.find((x) => x.id === id);
@@ -52,10 +62,14 @@ class Ctx {
   log(e: { caregiverId?: string; requirementId?: string; actor: Actor; who?: string; action: string; detail?: string }) {
     this.db.audit.push({ id: newId('ev'), time: now(), ...e });
   }
+  /** Every outgoing text goes through here. */
+  send(cg: Caregiver, text: string) {
+    this.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text, time: now() });
+  }
   async sms(kind: SmsKind, cg: Caregiver, req: RequirementType, extra: { missingField?: { key: string; label: string }; documentType?: string } = {}) {
     if (cg.optedOut && kind !== 'opted-out') return;
     const text = await draftSms(kind, { caregiver: cg, requirement: req, ...extra });
-    this.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text, time: now() });
+    this.send(cg, text);
     return text;
   }
 }
@@ -107,7 +121,7 @@ function sameName(a: string, b: string) {
 }
 
 export function unverifiedCount(sub: Submission) {
-  return sub.fields.filter((f) => (f.value !== null && (f.source === 'ai' || f.source === 'caregiver')) || (f.required && f.value === null)).length;
+  return sub.fields.filter(isUnconfirmed).length;
 }
 
 type Verdict = { kind: 'ready' } | { kind: 'follow-up'; field: ExtractedFieldValue } | { kind: 'escalate'; reason: string };
@@ -228,6 +242,15 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
   if (text && isOptOut(text)) {
     cg.optedOut = true;
     c.log({ caregiverId: cg.id, actor: 'caregiver', who: cg.name, action: 'opted out of SMS', detail: `Replied "${text}".` });
+    if (walletEnabled()) {
+      // leaving also takes this agency's records out of the wallet and cancels any open wallet question
+      const doc = await wallet(c);
+      const me = agencyRef(c.db);
+      const removed = withdraw(doc, holderKey(cg.phone), me);
+      doc.pending = doc.pending.filter((p) => !(p.agencyId === me.id && p.caregiverId === cg.id));
+      touchWallet(c);
+      if (removed) c.log({ caregiverId: cg.id, actor: 'system', action: 'removed records from the credential wallet', detail: 'The caregiver opted out.' });
+    }
     for (const s of c.db.requirements.filter((x) => x.caregiverId === cg.id && OPEN.includes(x.status))) {
       s.status = 'escalated';
       s.explanation = `${cg.firstName} opted out of texts. Staff need to collect this directly.`;
@@ -236,6 +259,8 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
     c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: (await draftSms('opted-out', { caregiver: cg, requirement: c.req('tb_test') })), time: now() });
     return;
   }
+
+  if (text && !file && (await walletConsent(c, cg, text))) return;
 
   const state = openStateFor(c, cg.id);
   c.log({ caregiverId: cg.id, requirementId: state?.requirementId, actor: 'caregiver', who: cg.name, action: file ? 'replied with a photo' : 'replied by text', detail: file ? file.name : `"${text}"` });
@@ -322,6 +347,98 @@ async function authorize(c: Ctx, caregiverId: string, requirementId: string, by:
   else c.log({ caregiverId, requirementId, actor: 'system', action: 'authorized outreach by rule', detail: 'Automatic requests are on in Rules.' });
   await c.sms('request', cg, req);
   c.log({ caregiverId, requirementId, actor: 'agent', action: cg.language === 'es' ? 'sent an SMS request in Spanish' : 'sent an SMS request', detail: cg.phone });
+  return true;
+}
+
+/* ---------------- credential wallet ---------------- */
+
+async function wallet(c: Ctx): Promise<WalletDoc> {
+  if (!walletEnabled()) throw new Error('The credential wallet is not configured. Set WALLET_PEPPER.');
+  if (!c.walletDoc) {
+    const stored = await readDoc<WalletDoc>(WALLET_KEY);
+    // the open demo shows the second-agency path with a sample "other agency"; signed-in deployments start empty
+    c.walletDoc = stored ?? (process.env.CARELOOP_AUTH === 'required' ? emptyWallet() : demoWallet());
+    if (!stored) c.walletDirty = true;
+  }
+  return c.walletDoc;
+}
+const touchWallet = (c: Ctx) => { c.walletDirty = true; };
+const agencyRef = (db: Db) => ({ id: agencyIdOf(db), name: db.agency.name });
+
+function textable(cg: Caregiver) {
+  if (!cg.smsConsent || cg.optedOut) throw new Error(`${cg.name} has not agreed to receive texts.`);
+}
+
+async function walletOfferShare(c: Ctx, caregiverId: string) {
+  const cg = c.caregiver(caregiverId);
+  textable(cg);
+  const doc = await wallet(c);
+  if (!snapshotCredentials(c.db, cg.id).length) throw new Error('Nothing to share yet: there are no approved, fully confirmed records for this caregiver.');
+  addPending(doc, { kind: 'share', caregiverId: cg.id, agencyId: agencyRef(c.db).id, agencyName: c.db.agency.name });
+  touchWallet(c);
+  c.send(cg, walletSms('share-ask', cg, c.db.agency.name));
+  c.log({ caregiverId: cg.id, actor: 'admin', who: c.db.agency.admin, action: 'asked permission to add verified records to the credential wallet', detail: 'Waiting for the caregiver to reply YES.' });
+}
+
+async function walletRequest(c: Ctx, caregiverId: string) {
+  const cg = c.caregiver(caregiverId);
+  textable(cg);
+  const doc = await wallet(c);
+  const me = agencyRef(c.db);
+  const found = availableFor(doc, holderKey(cg.phone), me.id);
+  // the answer is the same whether or not a wallet exists, so an agency cannot probe a phone number for one
+  if (found.length) {
+    addPending(doc, { kind: 'import', caregiverId: cg.id, agencyId: me.id, agencyName: me.name });
+    touchWallet(c);
+    c.send(cg, walletSms('import-ask', cg, c.db.agency.name));
+  }
+  c.log({ caregiverId: cg.id, actor: 'admin', who: c.db.agency.admin, action: 'checked the credential wallet', detail: `If ${cg.firstName} has records from other agencies, ${cg.firstName} is asked for permission before anything is shared.` });
+}
+
+async function walletWithdraw(c: Ctx, caregiverId: string) {
+  const cg = c.caregiver(caregiverId);
+  const doc = await wallet(c);
+  const removed = withdraw(doc, holderKey(cg.phone), agencyRef(c.db));
+  touchWallet(c);
+  c.log({ caregiverId: cg.id, actor: 'admin', who: c.db.agency.admin, action: 'removed records from the credential wallet', detail: removed ? `${removed} record${removed === 1 ? '' : 's'} removed. Copies other agencies already imported stay in their own files.` : 'This agency had nothing in the wallet.' });
+}
+
+/** A YES/NO reply to a wallet question. Returns false when no question is waiting, so the reply is handled as usual. */
+async function walletConsent(c: Ctx, cg: Caregiver, text: string): Promise<boolean> {
+  if (!walletEnabled() || (!isYes(text) && !isNo(text))) return false;
+  const doc = await wallet(c);
+  const me = agencyRef(c.db);
+  if (!hasPending(doc, me.id, cg.id)) return false;
+  const pending = takePending(doc, me.id, cg.id)!;
+  touchWallet(c);
+  const key = holderKey(cg.phone);
+  const holder = (doc.holders[key] ??= { credentials: [], access: [] });
+  c.log({ caregiverId: cg.id, actor: 'caregiver', who: cg.name, action: `replied ${isYes(text) ? 'YES' : 'NO'} to a credential wallet request`, detail: `"${text}"` });
+  if (isNo(text)) {
+    holder.access.push({ time: now(), agencyId: me.id, agencyName: me.name, action: 'declined' });
+    c.send(cg, walletSms('declined', cg, me.name));
+    return true;
+  }
+  if (pending.kind === 'share') {
+    const creds = snapshotCredentials(c.db, cg.id);
+    publish(doc, key, creds, me);
+    c.send(cg, walletSms('share-ok', cg, me.name));
+    c.log({ caregiverId: cg.id, actor: 'agent', action: 'added verified records to the credential wallet', detail: `${creds.length} record${creds.length === 1 ? '' : 's'}: ${creds.map((x) => x.name).join(', ')}. No photos are shared.` });
+    return true;
+  }
+  const result = importCredentials(c.db, cg, availableFor(doc, key, me.id), newId);
+  holder.access.push({ time: now(), agencyId: me.id, agencyName: me.name, action: 'imported', requirementIds: result.imported.map((i) => i.requirementId) });
+  for (const imp of result.imported) {
+    const sub = c.sub(imp.submissionId);
+    const req = c.req(imp.requirementId);
+    const state = c.state(cg.id, req.id);
+    // the registry is never taken on trust from another agency: look it up again here
+    await lookUpRegistry(c, sub, cg, req);
+    settleRegistry(sub, state);
+    c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'pre-filled a record from the credential wallet', detail: 'Every field still needs to be confirmed by a person here.' });
+  }
+  for (const sk of result.skipped) c.log({ caregiverId: cg.id, requirementId: sk.requirementId, actor: 'agent', action: 'skipped a wallet record', detail: sk.why });
+  c.send(cg, walletSms('import-ok', cg, me.name));
   return true;
 }
 
@@ -484,6 +601,15 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       c.log({ caregiverId: cg.id, actor: 'admin', who: db.agency.admin, action: 'exported the personnel file', detail: 'Audit packet generated.' });
       break;
     }
+    case 'wallet-offer-share':
+      await walletOfferShare(c, action.caregiverId);
+      break;
+    case 'wallet-request':
+      await walletRequest(c, action.caregiverId);
+      break;
+    case 'wallet-withdraw':
+      await walletWithdraw(c, action.caregiverId);
+      break;
     case 'approve': {
       const sub = c.sub(action.submissionId);
       if (unverifiedCount(sub) > 0) throw new Error('Every field must be verified by a person before approval.');
@@ -558,6 +684,7 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
       break;
     }
   }
+  if (c.walletDirty && c.walletDoc) await writeDoc(WALLET_KEY, c.walletDoc);
   if (!suppliedDb) await save(db);
   return db;
 }

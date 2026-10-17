@@ -65,8 +65,8 @@ export interface ExtractedFieldValue {
   label: string;
   value: string | null;
   required: boolean;
-  /** ai: extracted, not checked. caregiver: given in an SMS reply, not checked. verified/edited: a person confirmed it. */
-  source: 'ai' | 'caregiver' | 'verified' | 'edited';
+  /** ai: extracted, not checked. caregiver: given in an SMS reply, not checked. imported: came from the caregiver's credential wallet, not checked here. verified/edited: a person confirmed it. */
+  source: 'ai' | 'caregiver' | 'imported' | 'verified' | 'edited';
   confidence?: number;
   sourceRef?: string;
   verifiedBy?: string;

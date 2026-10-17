@@ -58,7 +58,7 @@ export function StatusBadge({ status, label }: { status: DocStatus; label?: stri
 export function ExtractedField(props: {
   label: string;
   value?: React.ReactNode;
-  source?: 'ai' | 'caregiver' | 'verified' | 'edited';
+  source?: 'ai' | 'caregiver' | 'imported' | 'verified' | 'edited';
   confidence?: number;
   sourceRef?: string;
   verifiedBy?: string;
@@ -66,7 +66,7 @@ export function ExtractedField(props: {
   children?: React.ReactNode;
 }) {
   const source = props.source || 'ai';
-  const unchecked = source === 'ai' || source === 'caregiver';
+  const unchecked = source === 'ai' || source === 'caregiver' || source === 'imported';
   const low = unchecked && typeof props.confidence === 'number' && props.confidence < 0.8;
   let meta: React.ReactNode;
   if (props.missing) meta = <span className="cl-field-tag cl-tone-attention"><Icon name="flag" />Not found on document</span>;
@@ -76,7 +76,7 @@ export function ExtractedField(props: {
     meta = (
       <span className={cx('cl-field-tag', low ? 'cl-tone-attention' : 'cl-tone-agent')}>
         <Icon name="spark" />
-        {source === 'caregiver' ? 'From SMS reply' : 'AI'}
+        {source === 'caregiver' ? 'From SMS reply' : source === 'imported' ? 'From wallet · confirm' : 'AI'}
         {typeof props.confidence === 'number' ? ` · ${Math.round(props.confidence * 100)}%` : ''}
         {low ? ' · check this' : ''}
       </span>

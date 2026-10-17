@@ -140,7 +140,7 @@ const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '
 const day = (s?: string) => (s ? new Date(s.length === 10 ? s + 'T12:00:00Z' : s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '—');
 const stamp = (s: string) => new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short' });
 
-const SOURCE_TEXT: Record<ExtractedFieldValue['source'], string> = { verified: 'Confirmed by', edited: 'Corrected by', ai: 'Read by AI, not confirmed', caregiver: 'Reported by caregiver, not confirmed' };
+const SOURCE_TEXT: Record<ExtractedFieldValue['source'], string> = { verified: 'Confirmed by', edited: 'Corrected by', ai: 'Read by AI, not confirmed', caregiver: 'Reported by caregiver, not confirmed', imported: 'Imported from the caregiver\u2019s wallet, not confirmed' };
 
 export interface Original { sha256: string; bytes: number; dataUri?: string; missing?: boolean }
 

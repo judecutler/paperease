@@ -97,6 +97,25 @@ export async function readUpload(name: string): Promise<Buffer | null> {
   return fs.existsSync(file) ? fs.readFileSync(file) : null;
 }
 
+// Small named JSON documents that sit beside the main store (the credential wallet, for one).
+// Supabase: table app_docs. Local: data/<key>.json. Reads return null when nothing is stored yet.
+export async function readDoc<T>(key: string): Promise<T | null> {
+  const sb = supabase();
+  if (sb) {
+    const { data, error } = await sb.from('app_docs').select('data').eq('key', key).maybeSingle();
+    if (error) throw new Error(`Supabase: ${error.message}`);
+    return (data?.data as T) ?? null;
+  }
+  try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, `${key}.json`), 'utf8')) as T; } catch { return null; }
+}
+
+export async function writeDoc(key: string, value: unknown) {
+  const sb = supabase();
+  if (sb) return void check(await sb.from('app_docs').upsert({ key, data: value, updated_at: new Date().toISOString() }));
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(path.join(DATA_DIR, `${key}.json`), JSON.stringify(value, null, 2));
+}
+
 let counter = 0;
 export function newId(prefix: string) {
   counter = (counter + 1) % 1000;
