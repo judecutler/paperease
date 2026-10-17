@@ -1,4 +1,4 @@
-import type { Caregiver, Db, RequirementState, RequirementType, Submission, SmsMessage, AuditEvent } from './types';
+import type { Caregiver, Db, RequirementState, RequirementType, Rules, Submission, SmsMessage, AuditEvent } from './types';
 
 // California HCO-oriented checklist for the demo. Verify every rule against current
 // Home Care Services Bureau guidance before relying on it.
@@ -102,6 +102,15 @@ function approved(caregiverId: string, requirementId: string, expiresIn?: number
     expiresOn: expiresIn === undefined ? undefined : date(expiresIn),
   };
 }
+
+export const DEFAULT_RULES: Omit<Rules, 'requirements'> = {
+  expiringWithinDays: 30,
+  minConfidence: 0.6,
+  maxFollowUps: 2,
+  autoRequest: false,
+  reminderAfterDays: 1,
+  maxReminders: 2,
+};
 
 export function seedDb(): Db {
   const reqs: RequirementState[] = [];
@@ -249,7 +258,7 @@ export function seedDb(): Db {
   return {
     version: 1,
     agency: { name: 'Sunrise Home Care', admin: 'Dana (Admin)' },
-    rules: { expiringWithinDays: 30, minConfidence: 0.6, maxFollowUps: 2, requirements: REQUIREMENTS },
+    rules: { ...DEFAULT_RULES, requirements: REQUIREMENTS },
     caregivers: CAREGIVERS,
     requirements: reqs,
     submissions: subs,

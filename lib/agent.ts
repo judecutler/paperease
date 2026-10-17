@@ -5,6 +5,7 @@ import type { Actor, Caregiver, Db, ExtractedFieldValue, RequirementState, Requi
 
 export type Action =
   | { type: 'run-gap-check' }
+  | { type: 'run-sweep'; trigger?: 'schedule' | 'admin' }
   | { type: 'authorize-outreach'; caregiverId: string; requirementId: string }
   | { type: 'authorize-all' }
   | { type: 'send-reminder'; caregiverId: string; requirementId: string }
@@ -15,7 +16,7 @@ export type Action =
   | { type: 'reject'; submissionId: string; reason?: string }
   | { type: 'request-another'; submissionId: string }
   | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es' }
-  | { type: 'update-rules'; expiringWithinDays: number; minConfidence: number; maxFollowUps: number }
+  | { type: 'update-rules'; expiringWithinDays: number; minConfidence: number; maxFollowUps: number; autoRequest: boolean; reminderAfterDays: number; maxReminders: number }
   | { type: 'reset' };
 
 const OPEN: RequirementState['status'][] = ['requested', 'following-up'];
@@ -242,7 +243,7 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
 
 /* ---------------- admin actions ---------------- */
 
-async function authorize(c: Ctx, caregiverId: string, requirementId: string) {
+async function authorize(c: Ctx, caregiverId: string, requirementId: string, by: 'admin' | 'rule' = 'admin') {
   const cg = c.caregiver(caregiverId);
   const req = c.req(requirementId);
   const state = c.state(caregiverId, requirementId);
@@ -258,10 +259,71 @@ async function authorize(c: Ctx, caregiverId: string, requirementId: string) {
   state.openSubmissionId = sub.id;
   state.status = 'requested';
   state.explanation = `Agent asked ${cg.firstName} by SMS. Waiting for a reply.`;
-  c.log({ caregiverId, requirementId, actor: 'admin', who: c.db.agency.admin, action: 'authorized outreach' });
+  if (by === 'admin') c.log({ caregiverId, requirementId, actor: 'admin', who: c.db.agency.admin, action: 'authorized outreach' });
+  else c.log({ caregiverId, requirementId, actor: 'system', action: 'authorized outreach by rule', detail: 'Automatic requests are on in Rules.' });
   await c.sms('request', cg, req);
   c.log({ caregiverId, requirementId, actor: 'agent', action: cg.language === 'es' ? 'sent an SMS request in Spanish' : 'sent an SMS request', detail: cg.phone });
   return true;
+}
+
+/* ---------------- daily sweep ---------------- */
+
+const REMINDER_ACTIONS = ['sent a reminder', 'sent an automatic reminder'];
+const calendarDaysSince = (time: string) => Math.round((Date.parse(now().slice(0, 10)) - Date.parse(time.slice(0, 10))) / 86_400_000);
+
+// What a scheduler does once a day: re-check gaps, request new ones when the rules allow it,
+// remind caregivers who have not replied, and hand requests that stay silent to a person.
+async function sweep(c: Ctx, trigger: 'schedule' | 'admin') {
+  const { rules } = c.db;
+  const changes = detectGaps(c.db);
+  let requested = 0;
+  let reminded = 0;
+  let escalated = 0;
+
+  if (rules.autoRequest) {
+    for (const s of c.db.requirements.filter((x) => x.status === 'missing' || x.status === 'expiring')) {
+      const cg = c.caregiver(s.caregiverId);
+      if (!c.req(s.requirementId).smsCollectible || !cg.smsConsent || cg.optedOut) continue;
+      if (await authorize(c, s.caregiverId, s.requirementId, 'rule')) requested++;
+    }
+  }
+
+  for (const s of c.db.requirements.filter((x) => OPEN.includes(x.status) && x.openSubmissionId)) {
+    const cg = c.caregiver(s.caregiverId);
+    const req = c.req(s.requirementId);
+    const sub = c.sub(s.openSubmissionId!);
+    if (cg.optedOut) continue;
+    // activity on this request since it was opened; a caregiver reply restarts the reminder count
+    const events = c.db.audit.filter((e) => e.caregiverId === cg.id && e.requirementId === req.id && e.time >= sub.createdAt);
+    if (!events.length || calendarDaysSince(events[events.length - 1].time) < rules.reminderAfterDays) continue;
+    const lastReply = events.findLastIndex((e) => e.actor === 'caregiver');
+    const sent = events.slice(lastReply + 1).filter((e) => REMINDER_ACTIONS.includes(e.action)).length;
+    if (sent >= rules.maxReminders) {
+      const reason = `No reply from ${cg.firstName} after ${sent} reminder${sent === 1 ? '' : 's'}. A person should reach out directly.`;
+      sub.state = 'escalated';
+      sub.escalation = reason;
+      s.status = 'escalated';
+      s.explanation = reason;
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'escalated to an admin', detail: reason });
+      escalated++;
+    } else {
+      await c.sms('reminder', cg, req);
+      c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'sent an automatic reminder', detail: `Reminder ${sent + 1} of ${rules.maxReminders}, after ${calendarDaysSince(events[events.length - 1].time)} days without a reply.` });
+      reminded++;
+    }
+  }
+
+  const did = [
+    requested && `${requested} new request${requested === 1 ? '' : 's'}`,
+    reminded && `${reminded} reminder${reminded === 1 ? '' : 's'}`,
+    escalated && `${escalated} escalated`,
+  ].filter(Boolean);
+  c.log({
+    actor: trigger === 'admin' ? 'admin' : 'system',
+    who: trigger === 'admin' ? c.db.agency.admin : undefined,
+    action: trigger === 'admin' ? 'ran the daily sweep' : 'ran the scheduled daily sweep',
+    detail: [did.length ? did.join(', ') + '.' : 'Nothing to send.', ...changes].join(' '),
+  });
 }
 
 export async function run(action: Action): Promise<Db> {
@@ -275,6 +337,9 @@ export async function run(action: Action): Promise<Db> {
       c.log({ actor: 'system', action: `ran gap detection: ${open} item${open === 1 ? '' : 's'} need attention`, detail: changes.length ? changes.join('; ') : 'No new changes since the last check.' });
       break;
     }
+    case 'run-sweep':
+      await sweep(c, action.trigger ?? 'admin');
+      break;
     case 'authorize-outreach':
       await authorize(c, action.caregiverId, action.requirementId);
       break;
@@ -377,8 +442,12 @@ export async function run(action: Action): Promise<Db> {
       db.rules.expiringWithinDays = Math.max(1, Math.round(action.expiringWithinDays));
       db.rules.minConfidence = Math.min(0.99, Math.max(0.1, action.minConfidence));
       db.rules.maxFollowUps = Math.max(0, Math.round(action.maxFollowUps));
+      db.rules.autoRequest = !!action.autoRequest;
+      db.rules.reminderAfterDays = Math.max(1, Math.round(action.reminderAfterDays));
+      db.rules.maxReminders = Math.max(0, Math.round(action.maxReminders));
       const changes = detectGaps(db);
-      c.log({ actor: 'admin', who: db.agency.admin, action: 'updated compliance rules', detail: `Expiring window ${db.rules.expiringWithinDays} days, confidence floor ${Math.round(db.rules.minConfidence * 100)}%, ${db.rules.maxFollowUps} follow-ups.${changes.length ? ' ' + changes.join('; ') : ''}` });
+      const r = db.rules;
+      c.log({ actor: 'admin', who: db.agency.admin, action: 'updated compliance rules', detail: `Expiring window ${r.expiringWithinDays} days, confidence floor ${Math.round(r.minConfidence * 100)}%, ${r.maxFollowUps} follow-ups. Daily sweep: ${r.autoRequest ? 'requests new gaps' : 'waits for an admin to request'}, reminds after ${r.reminderAfterDays} day${r.reminderAfterDays === 1 ? '' : 's'}, escalates after ${r.maxReminders} reminder${r.maxReminders === 1 ? '' : 's'}.${changes.length ? ' ' + changes.join('; ') : ''}` });
       break;
     }
   }

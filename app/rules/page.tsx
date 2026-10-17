@@ -6,9 +6,11 @@ import { useCareLoop } from '@/components/useCareLoop';
 
 export default function RulesPage() {
   const { data, busy, error, setError, act } = useCareLoop();
-  const [form, setForm] = useState({ expiringWithinDays: 30, minConfidence: 60, maxFollowUps: 2 });
+  const [form, setForm] = useState({ expiringWithinDays: 30, minConfidence: 60, maxFollowUps: 2, autoRequest: false, reminderAfterDays: 1, maxReminders: 2 });
   useEffect(() => {
-    if (data) setForm({ expiringWithinDays: data.db.rules.expiringWithinDays, minConfidence: Math.round(data.db.rules.minConfidence * 100), maxFollowUps: data.db.rules.maxFollowUps });
+    if (!data) return;
+    const r = data.db.rules;
+    setForm({ expiringWithinDays: r.expiringWithinDays, minConfidence: Math.round(r.minConfidence * 100), maxFollowUps: r.maxFollowUps, autoRequest: r.autoRequest, reminderAfterDays: r.reminderAfterDays, maxReminders: r.maxReminders });
   }, [data]);
   if (!data) return <Shell error={error}><p className="loading">Loading…</p></Shell>;
   const { rules } = data.db;
@@ -28,13 +30,23 @@ export default function RulesPage() {
           className="form-row"
           onSubmit={(e) => {
             e.preventDefault();
-            act({ type: 'update-rules', expiringWithinDays: form.expiringWithinDays, minConfidence: form.minConfidence / 100, maxFollowUps: form.maxFollowUps });
+            act({ type: 'update-rules', ...form, minConfidence: form.minConfidence / 100 });
           }}
         >
           <label>Flag as expiring within (days)<input className="input" type="number" min={1} value={form.expiringWithinDays} onChange={(e) => setForm({ ...form, expiringWithinDays: +e.target.value })} /></label>
           <label>Escalate below confidence (%)<input className="input" type="number" min={10} max={99} value={form.minConfidence} onChange={(e) => setForm({ ...form, minConfidence: +e.target.value })} /></label>
           <label>Follow-ups before escalating<input className="input" type="number" min={0} max={5} value={form.maxFollowUps} onChange={(e) => setForm({ ...form, maxFollowUps: +e.target.value })} /></label>
+          <label>Remind after no reply for (days)<input className="input" type="number" min={1} value={form.reminderAfterDays} onChange={(e) => setForm({ ...form, reminderAfterDays: +e.target.value })} /></label>
+          <label>Reminders before escalating<input className="input" type="number" min={0} max={5} value={form.maxReminders} onChange={(e) => setForm({ ...form, maxReminders: +e.target.value })} /></label>
+          <label className="check">
+            <input type="checkbox" checked={form.autoRequest} onChange={(e) => setForm({ ...form, autoRequest: e.target.checked })} />
+            Let the daily sweep request new gaps without asking me
+          </label>
           <Button type="submit" disabled={busy}>Save and re-check</Button>
+          <p className="small muted" style={{ flexBasis: '100%' }}>
+            The daily sweep runs every morning. It re-checks expiry dates, reminds caregivers who have not replied and hands silent requests to a person.
+            With automatic requests off, the agent only texts about gaps you have asked it to collect.
+          </p>
         </form>
       </section>
 

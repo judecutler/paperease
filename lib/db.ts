@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { seedDb } from './seed';
+import { DEFAULT_RULES, seedDb } from './seed';
 import type { AuditEvent, Caregiver, Db, RequirementState, RequirementType, SmsMessage, Submission } from './types';
 
 // The whole store goes through load()/save(), uploads through writeUpload()/readUpload(). With SUPABASE_URL and
@@ -44,6 +44,8 @@ export async function load(): Promise<Db> {
   if (memory) return memory;
   try {
     memory = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) as Db;
+    // stores written before a rule existed pick up its default
+    memory.rules = { ...DEFAULT_RULES, ...memory.rules };
   } catch {
     memory = seedDb();
     await save(memory);
@@ -130,6 +132,9 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
       expiringWithinDays: a.expiring_within_days,
       minConfidence: Number(a.min_confidence),
       maxFollowUps: a.max_follow_ups,
+      autoRequest: a.auto_request,
+      reminderAfterDays: a.reminder_after_days,
+      maxReminders: a.max_reminders,
       requirements: reqTypes.map((r): RequirementType => ({
         id: r.id,
         name: r.name,
@@ -203,6 +208,9 @@ async function saveSupabase(sb: SupabaseClient, db: Db) {
     expiring_within_days: db.rules.expiringWithinDays,
     min_confidence: db.rules.minConfidence,
     max_follow_ups: db.rules.maxFollowUps,
+    auto_request: db.rules.autoRequest,
+    reminder_after_days: db.rules.reminderAfterDays,
+    max_reminders: db.rules.maxReminders,
   }));
   const upsert = async (table: string, rows: object[], onConflict = 'id') => {
     if (rows.length) check(await sb.from(table).upsert(rows, { onConflict }));

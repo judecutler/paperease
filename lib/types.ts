@@ -39,6 +39,12 @@ export interface Rules {
   minConfidence: number;
   /** follow-ups the agent sends before escalating */
   maxFollowUps: number;
+  /** daily sweep: request new gaps without waiting for an admin */
+  autoRequest: boolean;
+  /** daily sweep: days without a reply before the agent sends a reminder */
+  reminderAfterDays: number;
+  /** daily sweep: reminders sent before escalating to a person */
+  maxReminders: number;
   requirements: RequirementType[];
 }
 

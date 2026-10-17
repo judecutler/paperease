@@ -14,6 +14,7 @@ Built as a hackathon MVP. The full flow runs end to end with no API keys and no 
 - **SMS outreach:** the agent requests documents in the caregiver's language (English or Spanish) and sends reminders.
 - **AI extraction:** reads the photo the caregiver sends and fills in each field with a confidence score and a pointer to where on the document it was found.
 - **Follow-ups:** when a required field is missing, the agent asks the caregiver and reads the answer from their reply.
+- **Daily sweep:** every morning the agent re-checks expiry dates and reminds caregivers who have not replied. Requests that stay silent go to a person. It can also request new gaps on its own if you turn that on.
 - **Exception handling:** escalates to a person for blurry photos, name mismatches, too few training hours, wrong documents and opt-outs.
 - **Human approval:** a person verifies or corrects every field before a record can be approved.
 - **Audit trail:** every action by the agent, the admin and the caregiver is logged in order.
@@ -60,6 +61,7 @@ Everything is optional. Copy `.env.example` to `.env.local` and fill in what you
 | `CARELOOP_MODEL` | Claude model (default `claude-opus-5-5`) |
 | `RUNANYWHERE_BASE_URL`, `RUNANYWHERE_API_KEY`, `RUNANYWHERE_MODEL` | Follow-up question copy through RunAnywhere (OpenAI-compatible) |
 | `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | Store data and uploads in Supabase instead of local files |
+| `CRON_SECRET` | Protects `/api/cron`, the daily sweep endpoint. Required in production |
 | `CARELOOP_DATA_DIR` | Where the local JSON store and uploads live (default `./data`) |
 
 ### AI
@@ -74,6 +76,17 @@ Each AI feature falls back to deterministic behavior when no key is set or a cal
 | Reply interpretation | Claude | Number and date rules |
 
 SMS is simulated. To connect Twilio, send from `Ctx.sms()` in `lib/agent.ts` and route inbound webhooks to the `caregiver-reply` action.
+
+### Daily sweep
+
+Once a day the agent:
+
+1. Re-checks expiry dates and flags documents that are expiring or expired.
+2. If **automatic requests** are on in Rules, texts caregivers about new gaps. They are off by default, so the agent only texts about gaps an admin has asked it to collect.
+3. Sends a reminder for any open request with no reply after the configured number of days.
+4. Escalates to a person once the reminder limit is reached. A caregiver's reply restarts the count.
+
+`vercel.json` runs it through Vercel Cron at 16:00 UTC (9 AM in California during daylight saving time). Vercel sends `Authorization: Bearer $CRON_SECRET`; any other scheduler can call `GET /api/cron` the same way. To run it by hand, click **Run daily sweep now** on the dashboard.
 
 ### Supabase
 
@@ -95,7 +108,7 @@ With Supabase on, **Reset demo data** resets the Supabase tables. `npm run reset
 | `lib/llm.ts` | Claude and RunAnywhere calls with fallbacks |
 | `lib/db.ts` | Storage for data (`load()`/`save()`) and uploads (`writeUpload()`/`readUpload()`), in Supabase or local files |
 | `lib/seed.ts` | Requirement checklist and sample data |
-| `app/` | Next.js pages (dashboard, caregiver detail, audit trail, rules) and API routes |
+| `app/` | Next.js pages (dashboard, caregiver detail, audit trail, rules) and API routes, including `api/cron` for the daily sweep |
 | `components/` | UI components and the client data hook |
 | `supabase/migrations/` | Postgres tables and the Storage bucket |
 | `scripts/seed-supabase.ts` | Copies the local store into Supabase and checks the round trip |

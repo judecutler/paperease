@@ -37,7 +37,7 @@ export default function Dashboard() {
     const req = db.rules.requirements.find((r) => r.id === s.requirementId)!;
     return (s.status === 'missing' || s.status === 'expiring') && req.smsCollectible && cg.smsConsent && !cg.optedOut;
   }).length;
-  const lastCheck = [...db.audit].reverse().find((e) => e.action.startsWith('ran gap detection'));
+  const lastSweep = [...db.audit].reverse().find((e) => e.action.includes('daily sweep'));
 
   return (
     <Shell ai={data.ai} error={error} onDismiss={() => setError(null)}>
@@ -46,11 +46,11 @@ export default function Dashboard() {
           <div className="eyebrow">{db.agency.name}</div>
           <h1>Documentation readiness</h1>
           <p className="muted small" style={{ marginTop: 4 }}>
-            {lastCheck ? `Gap check last ran ${timeLabel(lastCheck.time)}.` : 'Gap check has not run yet.'}
+            {lastSweep ? `Daily sweep last ran ${timeLabel(lastSweep.time)}: ${lastSweep.detail}` : 'The daily sweep has not run yet.'}
           </p>
         </div>
         <div className="actions">
-          <Button icon="spark" onClick={() => act({ type: 'run-gap-check' })} disabled={busy}>Run gap check</Button>
+          <Button icon="spark" onClick={() => act({ type: 'run-sweep' })} disabled={busy}>Run daily sweep now</Button>
           <Button variant="primary" icon="arrow" onClick={() => act({ type: 'authorize-all' })} disabled={busy || delegable === 0}>
             {delegable ? `Let the agent request ${delegable} missing item${delegable > 1 ? 's' : ''}` : 'Nothing to delegate'}
           </Button>
