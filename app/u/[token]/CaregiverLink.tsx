@@ -29,6 +29,7 @@ const T = {
     expired: 'This link has expired.',
     expiredBody: 'Reply to the text from your agency and they will send you a new one.',
     privacy: 'Only send the document we asked for. We never ask for your Social Security number by text.',
+    questions: (agency: string, phone: string) => `Questions? Call ${agency} at ${phone}.`,
     placeholder: { text: '', date: 'e.g. 10/05/2026', number: 'e.g. 5' },
   },
 
@@ -184,7 +185,10 @@ export function CaregiverLink({ token }: { token: string }) {
 
           {sending && <p className="cg-status" role="status">{t.sending}</p>}
           {error && <p className="cg-error" role="alert">{error}</p>}
-          <p className="cg-privacy small muted">{t.privacy}</p>
+          <p className="cg-privacy small muted">
+            {t.privacy}
+            {view.agencyPhone && <><br />{t.questions(view.agency, view.agencyPhone)}</>}
+          </p>
         </>
       )}
     </Frame>

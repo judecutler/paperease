@@ -10,7 +10,7 @@ export async function POST(request: Request) {
   if (me instanceof NextResponse) return me;
   try {
     const action = (await request.json()) as Action;
-    const db = await run(action, { origin: new URL(request.url).origin, admin: me?.name });
+    const db = await run(action, { origin: new URL(request.url).origin, admin: me?.name, adminEmail: me?.email });
     return NextResponse.json(payload(db, me));
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 400 });

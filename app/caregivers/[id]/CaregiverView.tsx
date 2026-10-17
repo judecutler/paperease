@@ -7,6 +7,7 @@ import { RegistryCheckCard } from '@/components/RegistryCheck';
 import { dateLabel, timeLabel, usePaperEase } from '@/components/usePaperEase';
 import { approvalBlocker, needsRegistryCheck } from '@/lib/registry';
 import type { Payload } from '@/lib/payload';
+import { hcoFor } from '@/lib/staff';
 import type { ExtractedFieldValue, RequirementState, RequirementType, Submission } from '@/lib/types';
 
 const unverified = (s: Submission) =>
@@ -38,6 +39,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
     .filter((e) => e.caregiverId === id)
     .map((e) => ({ ...e, time: timeLabel(e.time), detail: [db.rules.requirements.find((r) => r.id === e.requirementId)?.name, e.detail].filter(Boolean).join(' · ') }))
     .reverse();
+  const hco = hcoFor(db, cg);
   const approvedCount = states.filter((s) => s.status === 'approved').length;
   const openRequirements = states
     .filter((s) => (s.status === 'requested' || s.status === 'following-up') && s.openSubmissionId)
@@ -55,6 +57,20 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
             <span className="cl-data">{cg.phone}</span> · SMS in English · hired {dateLabel(cg.hiredOn)} ·{' '}
             {cg.optedOut ? 'opted out of texts' : cg.smsConsent ? 'agreed to texts' : 'no SMS consent'}
           </p>
+          <div className="assign small">
+            <label>
+              Assigned to{' '}
+              <select className="input input-sm" value={cg.assignedTo ?? ''} disabled={busy} onChange={(e) => act({ type: 'assign-caregiver', caregiverId: cg.id, email: e.target.value })}>
+                <option value="">Unassigned</option>
+                {db.staff.map((s) => <option key={s.email} value={s.email}>{s.name}</option>)}
+              </select>
+            </label>
+            {hco ? (
+              <span className="muted">{hco.name} · HCO license <span className="cl-data">{hco.license || 'not set'}</span> · {hco.phone}</span>
+            ) : (
+              <span className="muted">No HCO: texts and the upload page use {db.agency.name}.</span>
+            )}
+          </div>
         </div>
         <div className="muted small">{approvedCount} of {states.length} requirements approved</div>
       </div>

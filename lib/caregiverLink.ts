@@ -1,5 +1,6 @@
 import { aiStatus, askFor, fieldName } from './llm';
 import { sampleDocs } from './samples';
+import { hcoFor } from './staff';
 import type { Db, FieldSpec } from './types';
 
 // What a caregiver sees on their upload link. Only their first name, the agency and the document
@@ -15,7 +16,9 @@ export type LinkState =
 
 export interface LinkView {
   state: LinkState;
+  /** the caregiver's HCO (their assigned staff member's), else the agency */
   agency: string;
+  agencyPhone?: string;
   firstName: string;
   language: 'en' | 'es';
   /** e.g. "a photo of your Home Care Aide registration" */
@@ -47,5 +50,6 @@ export function linkView(db: Db, submissionId: string): (LinkView & { caregiverI
   else if (current && st.status === 'escalated') state = 'office';
 
   const samples = aiStatus().extraction === 'mock' && (state === 'open' || state === 'question') ? sampleDocs().map(({ id, label }) => ({ id, label })) : undefined;
-  return { state, agency: db.agency.name, firstName: cg.firstName, language: cg.language, ask: askFor(req, cg.language), question, samples, caregiverId: cg.id, requirementId: req.id };
+  const hco = hcoFor(db, cg);
+  return { state, agency: hco?.name || db.agency.name, agencyPhone: hco?.phone || undefined, firstName: cg.firstName, language: cg.language, ask: askFor(req, cg.language), question, samples, caregiverId: cg.id, requirementId: req.id };
 }

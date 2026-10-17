@@ -1,17 +1,18 @@
 import { load, newId, save, reset } from './db';
 import { draftSms, extractDocument, interpretReply, isOptOut, type SmsKind } from './llm';
 import { linkUrl } from './links';
+import { staffFor } from './staff';
 import { findSample } from './samples';
 import { inspectPhoto, sameCaregiverName, uncheckedPhoto } from './photo-check';
 import { approvalBlocker, findPerIdInText, needsRegistryCheck, REGISTRY_REASON_PREFIX, registryEscalation } from './registry';
 import { checkRegistry, manualRegistryCheck } from './registry-providers';
-import type { Actor, Caregiver, Db, ExtractedFieldValue, RegistryStatus, RequirementState, RequirementType, SmsMessage, Submission, SubmissionFile } from './types';
+import type { Actor, Caregiver, Db, ExtractedFieldValue, Hco, RegistryStatus, RequirementState, RequirementType, SmsMessage, Submission, SubmissionFile } from './types';
 
 export type Action =
   | { type: 'run-gap-check' }
   | { type: 'run-sweep'; trigger?: 'schedule' | 'admin' }
   | { type: 'authorize-outreach'; caregiverId: string; requirementId: string }
-  | { type: 'authorize-all' }
+  | { type: 'authorize-all'; caregiverIds?: string[] }
   | { type: 'send-reminder'; caregiverId: string; requirementId: string }
   | { type: 'caregiver-reply'; caregiverId: string; text?: string; sampleId?: string; upload?: SubmissionFile; requirementId?: string; via?: 'link' }
   | { type: 'verify-field'; submissionId: string; key: string }
@@ -23,7 +24,9 @@ export type Action =
   | { type: 'attach-file'; submissionId: string; upload: SubmissionFile }
   | { type: 'check-registry'; submissionId: string }
   | { type: 'record-registry-check'; submissionId: string; result: RegistryStatus | 'NOT_FOUND' }
-  | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es' }
+  | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es'; assignedTo?: string }
+  | { type: 'assign-caregiver'; caregiverId: string; email: string }
+  | { type: 'update-hco'; email: string; hco: Hco }
   | { type: 'update-rules'; expiringWithinDays: number; minConfidence: number; maxFollowUps: number; autoRequest: boolean; reminderAfterDays: number; maxReminders: number }
   | { type: 'reset' };
 
@@ -37,7 +40,7 @@ class Ctx {
   /** origin is the app's public URL, used to build upload links; without it texts go out with no link.
    *  admin is the signed-in person acting, recorded on decisions; demo mode without login uses the agency's admin. */
   admin: string;
-  constructor(public db: Db, public origin?: string, admin?: string) {
+  constructor(public db: Db, public origin?: string, admin?: string, public adminEmail?: string) {
     this.admin = admin || db.agency.admin;
   }
   caregiver(id: string) {
@@ -441,12 +444,12 @@ async function attachToRecord(c: Ctx, sub: Submission, req: RequirementType, fil
   c.log({ caregiverId: sub.caregiverId, requirementId: req.id, actor: 'agent', action: `read ${filled} field${filled === 1 ? '' : 's'} from the attached document`, detail: 'Each value still needs a person to verify it.' });
 }
 
-export async function run(action: Action, opts: { origin?: string; admin?: string; db?: Db } = {}): Promise<Db> {
+export async function run(action: Action, opts: { origin?: string; admin?: string; adminEmail?: string; db?: Db } = {}): Promise<Db> {
   // opts.db: a regulatory workspace's store, which cannot be reset or grow caregivers from here
   if (opts.db && ['reset', 'add-caregiver'].includes(action.type)) throw new Error('Use regulatory onboarding to manage this workspace.');
   if (action.type === 'reset') return await reset();
   const db = opts.db || await load();
-  const c = new Ctx(db, opts.origin, opts.admin);
+  const c = new Ctx(db, opts.origin, opts.admin, opts.adminEmail);
   switch (action.type) {
     case 'run-gap-check': {
       const changes = detectGaps(db);
@@ -462,7 +465,7 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
       break;
     case 'authorize-all': {
       let sent = 0;
-      for (const s of db.requirements.filter((x) => x.status === 'missing' || x.status === 'expiring')) {
+      for (const s of db.requirements.filter((x) => (x.status === 'missing' || x.status === 'expiring') && (!action.caregiverIds || action.caregiverIds.includes(x.caregiverId)))) {
         const cg = c.caregiver(s.caregiverId);
         if (!c.req(s.requirementId).smsCollectible || !cg.smsConsent || cg.optedOut) continue;
         if (await authorize(c, s.caregiverId, s.requirementId)) sent++;
@@ -621,12 +624,34 @@ export async function run(action: Action, opts: { origin?: string; admin?: strin
       const name = action.name.trim();
       if (!name) throw new Error('Name is required.');
       const id = newId('cg');
-      db.caregivers.push({ id, name, firstName: name.split(/\s+/)[0], phone: action.phone.trim(), language: 'en', hiredOn: now().slice(0, 10), smsConsent: true });
+      // a new caregiver goes to whoever adds them unless they pick someone else
+      const assignedTo = staffFor(db, action.assignedTo ?? c.adminEmail)?.email;
+      db.caregivers.push({ id, name, firstName: name.split(/\s+/)[0], phone: action.phone.trim(), language: 'en', hiredOn: now().slice(0, 10), smsConsent: true, assignedTo });
       for (const r of db.rules.requirements) {
         db.requirements.push({ caregiverId: id, requirementId: r.id, status: 'missing', explanation: `No ${r.name.toLowerCase()} on file. ${r.rule}` });
       }
       detectGaps(db);
       c.log({ caregiverId: id, actor: 'admin', who: c.admin, action: 'added a caregiver', detail: `${name}, ${db.rules.requirements.length} requirements flagged as missing.` });
+      break;
+    }
+    case 'assign-caregiver': {
+      const cg = c.caregiver(action.caregiverId);
+      const to = action.email ? staffFor(db, action.email) : undefined;
+      if (action.email && !to) throw new Error('Unknown staff member.');
+      const from = staffFor(db, cg.assignedTo);
+      cg.assignedTo = to?.email;
+      c.log({ caregiverId: cg.id, actor: 'admin', who: c.admin, action: to ? `assigned ${cg.firstName} to ${to.name}` : `unassigned ${cg.firstName}`, detail: [from && `was ${from.name}`, to?.hco.name].filter(Boolean).join(' · ') || undefined });
+      break;
+    }
+    case 'update-hco': {
+      // with sign-in on, people edit only their own HCO
+      if (c.adminEmail && c.adminEmail.toLowerCase() !== action.email.toLowerCase()) throw new Error('You can only edit your own HCO details.');
+      const hco = { name: action.hco.name.trim(), license: action.hco.license.trim(), address: action.hco.address.trim(), phone: action.hco.phone.trim() };
+      if (!hco.name) throw new Error('The HCO name is required.');
+      const existing = staffFor(db, action.email);
+      if (existing) existing.hco = hco;
+      else db.staff.push({ email: action.email.toLowerCase(), name: c.admin, hco });
+      c.log({ actor: 'admin', who: c.admin, action: 'updated HCO details', detail: `${hco.name}${hco.license ? ` · license ${hco.license}` : ''}` });
       break;
     }
     case 'update-rules': {

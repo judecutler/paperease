@@ -1,4 +1,4 @@
-import type { Caregiver, Db, RequirementState, RequirementType, Rules, Submission, SmsMessage, AuditEvent } from './types';
+import type { Caregiver, Db, RequirementState, RequirementType, Rules, Staff, Submission, SmsMessage, AuditEvent } from './types';
 
 // California HCO-oriented checklist for the demo. Verify every rule against current
 // Home Care Services Bureau guidance before relying on it.
@@ -83,6 +83,24 @@ const iso = (offsetDays: number, hour = 9) => {
   return d.toISOString();
 };
 const date = (offsetDays: number) => iso(offsetDays).slice(0, 10);
+
+// demo staff, one per demo admin account (npm run admin:add), each with a fictional HCO
+export const DEFAULT_STAFF: Staff[] = [
+  { email: 'admin1@paperease.test', name: 'Dana Park', hco: { name: 'Sunrise Home Care', license: '194700101', address: '1200 Wilshire Blvd, Los Angeles, CA 90017', phone: '(213) 555-0190' } },
+  { email: 'admin2@paperease.test', name: 'Alex Kim', hco: { name: 'Golden Bay Home Care', license: '384700212', address: '455 Market St, San Francisco, CA 94105', phone: '(415) 555-0123' } },
+  { email: 'admin3@paperease.test', name: 'Sam Lee', hco: { name: 'Valley Comfort Care', license: '434700325', address: '2100 Tulare St, Fresno, CA 93721', phone: '(559) 555-0147' } },
+  { email: 'admin4@paperease.test', name: 'Jordan Cho', hco: { name: 'Pacific Grove Caregivers', license: '157000438', address: '600 B St, San Diego, CA 92101', phone: '(619) 555-0165' } },
+];
+
+/** who looks after each sample caregiver */
+export const DEFAULT_ASSIGNMENTS: Record<string, string> = {
+  maria: 'admin1@paperease.test',
+  james: 'admin1@paperease.test',
+  ana: 'admin2@paperease.test',
+  david: 'admin2@paperease.test',
+  grace: 'admin3@paperease.test',
+  luis: 'admin4@paperease.test',
+};
 
 const CAREGIVERS: Caregiver[] = [
   { id: 'maria', name: 'Maria Lopez', firstName: 'Maria', phone: '(213) 555-0142', language: 'en', hiredOn: date(-760), smsConsent: true },
@@ -259,7 +277,8 @@ export function seedDb(): Db {
     version: 1,
     agency: { name: 'Sunrise Home Care', admin: 'Dana (Admin)' },
     rules: { ...DEFAULT_RULES, requirements: REQUIREMENTS },
-    caregivers: CAREGIVERS,
+    staff: DEFAULT_STAFF,
+    caregivers: CAREGIVERS.map((c) => ({ ...c, assignedTo: DEFAULT_ASSIGNMENTS[c.id] })),
     requirements: reqs,
     submissions: subs,
     messages,

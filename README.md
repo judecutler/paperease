@@ -101,6 +101,15 @@ npm run admin:add -- dana@example.com "Dana Park"   # prints a password once; ru
 
 Without Supabase (the local JSON demo) there is no sign-in.
 
+### Staff, assignments and HCO details
+
+Every caregiver can be assigned to a staff member, and every staff member has their HCO's name, license number, address and phone. Signed in, the dashboard shows **My caregivers** by default, with **All** to see everyone, and the agent's bulk request only covers the caregivers on screen. Caregivers see their assigned staff member's HCO name and phone on the upload page.
+
+- Change who looks after a caregiver from the caregiver's page.
+- Edit your own HCO on the Rules page. With sign-in on, you can only edit your own.
+- New caregivers go to whoever adds them unless you pick someone else.
+- The demo staff (admin1 to admin4@paperease.test) each have a fictional HCO, and the sample caregivers are split between them (`lib/seed.ts`).
+
 ### Caregiver upload links
 
 Request, reminder and follow-up texts end with a link to `/u/<token>`. The token is signed with `PAPEREASE_LINK_SECRET` and scoped to one open request. It expires after 72 hours, and as soon as the request moves on, for example when the office asks for another document. The page shows only the caregiver's first name, the agency and the document requested. Uploads go through the same checks and storage as everything else.

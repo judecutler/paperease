@@ -3,6 +3,9 @@ import { useEffect, useState } from 'react';
 import { Shell } from '@/components/Shell';
 import { Button } from '@/components/ui';
 import { usePaperEase } from '@/components/usePaperEase';
+import type { Payload } from '@/lib/payload';
+import { staffFor } from '@/lib/staff';
+import type { Hco } from '@/lib/types';
 
 export default function RulesPage() {
   const { data, busy, error, setError, act } = usePaperEase();
@@ -25,6 +28,8 @@ export default function RulesPage() {
           <p className="muted small" style={{ marginTop: 4 }}>A California HCO-oriented checklist for the demo. Verify each rule against current Home Care Services Bureau requirements before real use.</p>
         </div>
       </div>
+
+      <HcoCard data={data} busy={busy} act={act} />
 
       <section className="card">
         <div className="card-head"><h3>How the agent behaves</h3></div>
@@ -80,5 +85,63 @@ export default function RulesPage() {
         </div>
       </section>
     </Shell>
+  );
+}
+
+const EMPTY_HCO: Hco = { name: '', license: '', address: '', phone: '' };
+
+// Each staff member's HCO: caregivers assigned to them see its name on texts and the upload page.
+function HcoCard({ data, busy, act }: { data: Payload; busy: boolean; act: ReturnType<typeof usePaperEase>['act'] }) {
+  const me = data.me;
+  const mine = staffFor(data.db, me?.email);
+  const [hco, setHco] = useState<Hco>(mine?.hco ?? EMPTY_HCO);
+  // refill only when the saved details change, like the rules form
+  const saved = JSON.stringify(mine?.hco ?? null);
+  useEffect(() => setHco(mine?.hco ?? EMPTY_HCO), [saved]); // eslint-disable-line react-hooks/exhaustive-deps
+  const field = (key: keyof Hco, label: string, placeholder: string) => (
+    <label>{label}<input className="input" value={hco[key]} placeholder={placeholder} onChange={(e) => setHco({ ...hco, [key]: e.target.value })} /></label>
+  );
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h3>HCO details</h3>
+        <span className="muted small">Caregivers see their assigned staff member's HCO on texts and the upload page.</span>
+      </div>
+      {me ? (
+        <form
+          className="form-row"
+          style={{ marginBottom: 'var(--space-4)' }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            act({ type: 'update-hco', email: me.email, hco });
+          }}
+        >
+          {field('name', 'Your HCO name', 'Sunrise Home Care')}
+          {field('license', 'HCO license number', '194700101')}
+          {field('address', 'Address', '1200 Wilshire Blvd, Los Angeles, CA')}
+          {field('phone', 'Phone', '(213) 555-0190')}
+          <Button type="submit" disabled={busy}>Save HCO</Button>
+        </form>
+      ) : (
+        <p className="small muted" style={{ marginBottom: 'var(--space-4)' }}>Sign in to edit your own HCO details.</p>
+      )}
+      <div className="table-wrap">
+        <table className="rules-table" style={{ minWidth: 720 }}>
+          <thead><tr><th>Staff</th><th>HCO</th><th>License</th><th>Address</th><th>Phone</th><th>Caregivers</th></tr></thead>
+          <tbody>
+            {data.db.staff.map((s) => (
+              <tr key={s.email}>
+                <td><strong>{s.name}</strong><div className="small muted">{s.email}</div></td>
+                <td>{s.hco.name}</td>
+                <td className="cl-data">{s.hco.license || 'not set'}</td>
+                <td className="small">{s.hco.address}</td>
+                <td className="cl-data">{s.hco.phone}</td>
+                <td>{data.db.caregivers.filter((c) => c.assignedTo === s.email).length}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

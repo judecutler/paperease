@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { DEFAULT_RULES, seedDb } from './seed';
-import type { AuditEvent, Caregiver, Db, RequirementState, RequirementType, SmsMessage, Submission } from './types';
+import { DEFAULT_ASSIGNMENTS, DEFAULT_RULES, DEFAULT_STAFF, seedDb } from './seed';
+import type { AuditEvent, Caregiver, Db, RequirementState, RequirementType, SmsMessage, Staff, Submission } from './types';
 
 // The whole store goes through load()/save(), uploads through writeUpload()/readUpload(). With SUPABASE_URL and
 // SUPABASE_SECRET_KEY set they live in Supabase (tables and the uploads bucket in supabase/migrations);
@@ -37,7 +37,7 @@ export async function load(): Promise<Db> {
   const sb = supabase();
   if (sb) {
     const db = await loadSupabase(sb);
-    if (db) return db;
+    if (db) return withDefaults(db);
     const seeded = seedDb();
     await saveSupabase(sb, seeded);
     return seeded;
@@ -47,11 +47,19 @@ export async function load(): Promise<Db> {
     memory = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) as Db;
     // stores written before a rule existed pick up its default
     memory.rules = { ...DEFAULT_RULES, ...memory.rules };
+    withDefaults(memory);
   } catch {
     memory = seedDb();
     await save(memory);
   }
   return memory;
+}
+
+// stores made before staff existed get the demo staff and the sample caregivers' assignments
+function withDefaults(db: Db) {
+  if (!db.staff?.length) db.staff = DEFAULT_STAFF;
+  for (const c of db.caregivers) c.assignedTo ??= DEFAULT_ASSIGNMENTS[c.id];
+  return db;
 }
 
 export async function save(db: Db) {
@@ -115,7 +123,7 @@ const opt = <T>(v: T | null): T | undefined => (v === null ? undefined : v);
 
 async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
   const rows = async (q: PromiseLike<{ data: any[] | null; error: { message: string } | null }>) => check(await q).data ?? [];
-  const [agencies, reqTypes, caregivers, states, subs, msgs, audit] = await Promise.all([
+  const [agencies, reqTypes, caregivers, states, subs, msgs, audit, staff] = await Promise.all([
     rows(sb.from('agencies').select('*').eq('id', AGENCY_ID)),
     rows(sb.from('requirement_types').select('*').eq('agency_id', AGENCY_ID).order('position')),
     rows(sb.from('caregivers').select('*').eq('agency_id', AGENCY_ID).order('position')),
@@ -123,6 +131,7 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
     rows(sb.from('submissions').select('*').order('seq')),
     rows(sb.from('sms_messages').select('*').order('seq')),
     rows(sb.from('audit_events').select('*').order('seq')),
+    rows(sb.from('staff').select('*').eq('agency_id', AGENCY_ID).order('position')),
   ]);
   const a = agencies[0];
   if (!a) return null;
@@ -147,6 +156,7 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
         ask: r.ask,
       })),
     },
+    staff: staff.map((s): Staff => ({ email: s.email, name: s.name, hco: s.hco })),
     caregivers: caregivers.map((c): Caregiver => ({
       id: c.id,
       name: c.name,
@@ -156,6 +166,7 @@ async function loadSupabase(sb: SupabaseClient): Promise<Db | null> {
       hiredOn: c.hired_on,
       smsConsent: c.sms_consent,
       ...(c.opted_out && { optedOut: true }),
+      ...(c.assigned_to && { assignedTo: c.assigned_to }),
     })),
     requirements: states.map((s): RequirementState => ({
       caregiverId: s.caregiver_id,
@@ -230,6 +241,7 @@ async function saveSupabase(sb: SupabaseClient, db: Db) {
     ask: r.ask,
     fields: r.fields,
   })));
+  await upsert('staff', db.staff.map((m, i) => ({ email: m.email, agency_id: AGENCY_ID, position: i, name: m.name, hco: m.hco })), 'email');
   await upsert('caregivers', db.caregivers.map((c, i) => ({
     id: c.id,
     agency_id: AGENCY_ID,
@@ -241,6 +253,7 @@ async function saveSupabase(sb: SupabaseClient, db: Db) {
     hired_on: c.hiredOn,
     sms_consent: c.smsConsent,
     opted_out: c.optedOut ?? false,
+    assigned_to: c.assignedTo ?? null,
   })));
   await upsert('submissions', db.submissions.map((s) => ({
     id: s.id,
