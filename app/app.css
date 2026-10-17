@@ -124,3 +124,6 @@ table.roster { width: 100%; border-collapse: collapse; min-width: 900px; }
 .queue .cl-badge { flex: none; }
 .composer-row > .input { flex: 1 1 0; width: 0; min-width: 0; }
 .composer-row > .cl-btn { flex: none; }
+
+.reg-shell-alert { display: inline-flex; align-items: center; gap: 8px; background: #fff0ce; color: #633b00; font-size: 13px; font-weight: bold; border: 1px solid #bb771a; border-radius: 20px; padding: 6px 12px; text-decoration: none; white-space: nowrap; }
+.reg-shell-alert span { background: #8b5006; color: white; border-radius: 20px; padding: 1px 6px; }
