@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { RegulatoryNotifications } from "@/components/RegulatoryNotifications";
 import { Shell } from "@/components/Shell";
-import { Button, StatusBadge } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { jurisdictions } from "@/lib/regulatory/jurisdictions";
 import {
   Services,
@@ -12,7 +12,6 @@ import {
   type Worker,
 } from "@/lib/regulatory/types";
 import type { state } from "@/lib/regulatory/service";
-import type { Payload } from "@/lib/payload";
 import "../regulatory.css";
 type Data = Awaited<ReturnType<typeof state>>;
 async function api(path: string, body?: unknown, method?: string) {
@@ -33,7 +32,7 @@ export default function RegulatoryPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [auth, setAuth] = useState(false);
-  const [tab, setTab] = useState("coverage");
+  const [tab, setTab] = useState("changes");
   const [filter, setFilter] = useState("ALL");
   const [message, setMessage] = useState("");
   async function refresh() {
@@ -50,10 +49,9 @@ export default function RegulatoryPage() {
   }
   useEffect(() => {
     void refresh();
-    if (
-      new URLSearchParams(window.location.search).get("tab") === "notifications"
-    )
-      setTab("notifications");
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (requestedTab && ["changes", "sources", "coverage", "notifications", "onboarding", "operations"].includes(requestedTab)) setTab(requestedTab);
+    if (requestedTab === "checklist") window.location.replace("/regulatory");
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
     }, 10000);
@@ -65,7 +63,7 @@ export default function RegulatoryPage() {
     try {
       await api("actions", body);
       await refresh();
-      setMessage("Saved.");
+      setMessage((body as { type?: string }).type === "scan" ? "Source check queued. Open Activity to follow progress." : "Saved.");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -80,7 +78,7 @@ export default function RegulatoryPage() {
           <div>
             <div className="eyebrow">PaperEase</div>
             <h1>Regulatory watch</h1>
-            <p>Official sources. Cited changes. Reviewed obligations.</p>
+            <p>Review changes that affect your company.</p>
           </div>
         </div>
         {error && (
@@ -89,196 +87,60 @@ export default function RegulatoryPage() {
           </p>
         )}
         {auth && <Login onDone={refresh} />}
-        <p className="muted">
-          This workspace is separate from the original California demonstration.
-          Existing records are preserved.
-        </p>
+        {!auth && error && <Button onClick={refresh}>Try again</Button>}
         {!auth && !error && <p>Loading workspace…</p>}
       </Shell>
     );
   const filtered = data.sources.filter(
     (s) => filter === "ALL" || s.jurisdiction === filter,
   );
-  const rules = data.candidates.filter(
-    (r) => filter === "ALL" || r.jurisdiction === filter,
+  const today = new Date().toISOString().slice(0, 10);
+  const allRules = data.candidates.filter((r) => filter === "ALL" || r.jurisdiction === filter);
+  const isArchived = (r: Data["candidates"][number]) => Boolean(
+    (r.effectiveTo && r.effectiveTo <= today) || data.agency.adopted.some((id) => data.candidates.find((next) => next.id === id)?.previousId === r.id),
   );
-  const pending = data.jobs.filter((j) =>
-    ["queued", "running"].includes(j.state),
-  ).length;
+  const rules = allRules.filter((r) => !isArchived(r)).sort((a, b) => Number(data.agency.adopted.includes(a.id)) - Number(data.agency.adopted.includes(b.id)));
+  const archivedRules = allRules.filter(isArchived);
+  const reviewCount = rules.filter((r) => !data.agency.adopted.includes(r.id) && !data.agency.reviews.some((review) => review.ruleId === r.id && review.decision === "rejected")).length;
+  const pending = data.jobs.filter((j) => ["queued", "running"].includes(j.state)).length;
   return (
     <Shell error={error || undefined} onDismiss={() => setError("")}>
-      <p><a href="/regulatory">Company home</a></p>
-      <div className="page-head">
+      <div className="reg-watch">
+      <div className="page-head reg-watch-head">
         <div>
-          <div className="eyebrow">
-            {data.agency.profile.name} ·{" "}
-            {data.local ? "Isolated local demo" : "Private workspace"}
-          </div>
+          <div className="eyebrow">{data.agency.profile.name}</div>
           <h1>Regulatory watch</h1>
-          <p className="muted">
-            50 states, federal overlays and DC. Coverage is tracked separately
-            from legal review.
-          </p>
+          <p className="muted">Review changes. Adopt the rules that apply.</p>
         </div>
-        <div className="actions">
-          {data.local && (
-            <Button
-              variant="primary"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await api("demo", {});
-                  await refresh();
-                  setTab("changes");
-                  setMessage(
-                    "Guided demo ready: review the simulated change, approve it, then adopt it.",
-                  );
-                } catch (e) {
-                  setError((e as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Reset guided demo
-            </Button>
-          )}
-          <Button disabled={busy} onClick={() => act({ type: "scan" })}>
-            Queue due sources
-          </Button>
-          <Button
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const result = await api("process", {});
-                setMessage(`Worker stage: ${result.state || "idle"}`);
-                await refresh();
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Process next stage
-          </Button>
-          {!data.local && (
-            <Button
-              onClick={async () => {
-                await api("session", undefined, "DELETE");
-                setData(null);
-                setAuth(true);
-              }}
-            >
-              Sign out
-            </Button>
-          )}
-        </div>
+        <Button variant="primary" disabled={busy} onClick={async () => {
+          await act({ type: "scan" });
+        }}>Check sources</Button>
       </div>
-      {data.agency.notices.some((n) => !n.read) && (
-        <section
-          className="reg-alert-banner"
-          role="alert"
-          aria-label="Unread regulation alerts"
-        >
-          <div>
-            <span className="reg-alert-icon" aria-hidden="true">
-              !
-            </span>
-            <div>
-              <strong>
-                {data.agency.notices.filter((n) => !n.read).length} regulation
-                alert(s) need your attention
-              </strong>
-              <p>
-                {[...data.agency.notices].reverse().find((n) => !n.read)
-                  ?.detail || "A reviewed regulation update has been adopted."}
-              </p>
-            </div>
-          </div>
-          <Button variant="primary" onClick={() => setTab("notifications")}>
-            View alerts
-          </Button>
-        </section>
-      )}
-      <div className="reg-stats">
-        <div className="card">
-          <strong>50</strong>
-          <span>States inventoried as jurisdictions</span>
-        </div>
-        <div className="card">
-          <strong>
-            {
-              data.coverage.filter(
-                (c) =>
-                  c.code !== "US" &&
-                  c.code !== "DC" &&
-                  c.status === "monitored",
-              ).length
-            }
-            /50
-          </strong>
-          <span>States with fresh monitored sources</span>
-        </div>
-        <div className="card">
-          <strong>{rules.length}</strong>
-          <span>Candidate obligations, review required</span>
-        </div>
-        <div className="card">
-          <strong>{pending}</strong>
-          <span>Queued or running source jobs</span>
-        </div>
+      <div className="reg-watch-summary" aria-label="Watch summary">
+        <span><strong>{reviewCount}</strong> to review</span>
+        <span><strong>{rules.filter((r) => data.agency.adopted.includes(r.id)).length}</strong> adopted</span>
+        <span><strong>{filtered.filter((source) => source.approved && source.lastSuccess && !source.error).length}</strong> collected {filtered.filter((source) => source.approved && source.lastSuccess && !source.error).length === 1 ? "source" : "sources"}</span>
+        {pending > 0 && <span>{pending} checks queued or running</span>}
       </div>
-      <p className="reg-caution">
-        Monitoring a source does not establish complete legal coverage. Missing
-        rules, exceptions and local or program requirements remain review tasks.
-        No automatic legal-compliance certification is issued.
-      </p>
-      <div
-        className="reg-tabs"
-        role="tablist"
-        aria-label="Regulatory workspace"
-      >
-        {[
-          "notifications",
-          "coverage",
-          "sources",
-          "changes",
-          "onboarding",
-          "checklist",
-          "operations",
-        ].map((t) => (
-          <button
-            key={t}
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => {
-              setTab(t);
-              setMessage("");
-            }}
-          >
-            {label(t)}
-          </button>
-        ))}
-        <label>
-          Jurisdiction{" "}
-          <select
-            className="input"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          >
-            <option value="ALL">All jurisdictions</option>
-            <option value="US">Federal</option>
-            {jurisdictions.map((j) => (
-              <option key={j.code} value={j.code}>
-                {j.name}
-              </option>
-            ))}
+      <div className="reg-watch-toolbar">
+        <div className="reg-tabs" role="tablist" aria-label="Regulatory watch">
+          {[["changes", "Changes"], ["sources", "Sources"], ["coverage", "Coverage"]].map(([key, title]) => (
+            <button key={key} role="tab" aria-selected={tab === key} onClick={() => { setTab(key); setMessage(""); }}>{title}{key === "changes" && reviewCount > 0 && <span className="reg-tab-count">{reviewCount}</span>}</button>
+          ))}
+        </div>
+        <div className="reg-watch-filters">
+          <label className="sr-only" htmlFor="watch-jurisdiction">Jurisdiction</label>
+          <select id="watch-jurisdiction" className="input" value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <option value="ALL">All jurisdictions</option><option value="US">Federal</option>
+            {jurisdictions.map((j) => <option key={j.code} value={j.code}>{j.name}</option>)}
           </select>
-        </label>
+          <label className="sr-only" htmlFor="watch-more">More views</label>
+          <select id="watch-more" className="input" value={["notifications", "onboarding", "operations"].includes(tab) ? tab : ""} onChange={(e) => { if (e.target.value) { setTab(e.target.value); setMessage(""); } }}>
+            <option value="">More</option><option value="notifications">Alerts{data.agency.notices.some((n) => !n.read) ? ` (${data.agency.notices.filter((n) => !n.read).length} new)` : ""}</option><option value="onboarding">Company setup</option><option value="operations">Activity & demo</option>
+          </select>
+        </div>
       </div>
+      <p className="small muted reg-watch-note">{data.local ? "Fictional demo. Policies and examples are simulated." : "Source monitoring supports review; it does not certify compliance."}</p>
       {message && <p role="status">{message}</p>}
       {tab === "notifications" && (
         <RegulatoryNotifications
@@ -291,7 +153,7 @@ export default function RegulatoryPage() {
       {tab === "coverage" && (
         <section className="card">
           <div className="card-head">
-            <h3>Coverage and source freshness</h3>
+            <h3>Source coverage</h3>
           </div>
           <div className="reg-state-grid">
             {data.coverage
@@ -316,17 +178,14 @@ export default function RegulatoryPage() {
               ))}
           </div>
           <p className="muted small">
-            State regulator starting points require verification before
-            activation. Add statutes, administrative registers, licensing and
-            Medicaid sources for each topic. Discovery pages cannot become legal
-            obligations.
+            Review each source before enabling it. Discovery pages help locate rules; they are not obligations.
           </p>
         </section>
       )}
       {tab === "sources" && (
         <>
           <section className="card">
-            <h3>Source registry</h3>
+            <h3>Sources</h3>
             <div className="table-wrap">
               <table>
                 <thead>
@@ -378,17 +237,6 @@ export default function RegulatoryPage() {
                         >
                           {s.approved ? "Disable" : "Verify & enable"}
                         </Button>
-                        {s.approved && (
-                          <Button
-                            size="sm"
-                            disabled={busy}
-                            onClick={() =>
-                              act({ type: "scan", sourceId: s.id })
-                            }
-                          >
-                            Scan
-                          </Button>
-                        )}
                         {s.snapshotId && (
                           <Discovery id={s.snapshotId} source={s} act={act} />
                         )}
@@ -399,97 +247,26 @@ export default function RegulatoryPage() {
               </table>
             </div>
           </section>
-          <SourceForm act={act} busy={busy} />
+          <details className="reg-add-source"><summary>Add a source</summary><SourceForm act={act} busy={busy} /></details>
         </>
       )}
       {tab === "changes" && (
         <section className="stack">
-          {!rules.length && (
-            <div className="card">
-              <h3>No extracted obligations yet</h3>
-              <p>
-                Add and enable an official legal source, queue a scan, and let
-                the worker process it. Initial extraction establishes the
-                current baseline; later scans detect changes.
-              </p>
-            </div>
-          )}
+          <h2>{reviewCount ? "Changes to review" : "Current rules"}</h2>
+          {!rules.length && <div className="card"><h3>No rules yet</h3><p className="muted">Add a source to start tracking changes.</p><Button onClick={() => setTab("sources")}>Manage sources</Button></div>}
           {rules.map((rule) => {
-            const review = data.agency.reviews.find(
-              (r) => r.ruleId === rule.id,
-            );
-            return (
-              <article className="card" key={rule.id}>
-                <div className="card-head">
-                  <h3>{rule.title}</h3>
-                  <span className="tag">
-                    {rule.jurisdiction} ·{" "}
-                    {rule.demo ? "SIMULATED POLICY" : rule.legalStatus} ·{" "}
-                    {review?.decision || "Unreviewed"}
-                  </span>
-                </div>
-                <p>{rule.obligation}</p>
-                <p className="small muted">
-                  {rule.citation} · Effective {rule.effectiveFrom || "unknown"}
-                  {rule.effectiveTo ? ` until ${rule.effectiveTo}` : ""} ·
-                  Deadline {rule.deadline || "not specified"} ·{" "}
-                  {label(rule.topic)}
-                </p>
-                {rule.demo && (
-                  <p className="reg-caution">
-                    Simulated company policy for the presentation. This is not
-                    an actual legislative change.
-                  </p>
-                )}
-                <blockquote>{rule.quote}</blockquote>
-                <p className="small">
-                  Exceptions:{" "}
-                  {rule.exceptions || "No exception extracted; verify scope."}
-                </p>
-                {rule.unresolved.length > 0 && (
-                  <p className="reg-error">
-                    Unresolved: {rule.unresolved.join("; ")}
-                  </p>
-                )}
-                <details>
-                  <summary>Captured evidence and previous version</summary>
-                  <Evidence id={rule.snapshotId} />
-                  {rule.previousId && (
-                    <p>
-                      {data.candidates.find((r) => r.id === rule.previousId)
-                        ?.obligation || "Previous candidate unavailable"}
-                    </p>
-                  )}
-                </details>
-                <div className="reg-impact">
-                  {rule.impact.length ? (
-                    rule.impact.map((i) => (
-                      <p key={i.id}>
-                        <strong>
-                          {i.name}: {label(i.result)}
-                        </strong>
-                        <br />
-                        <span className="small muted">
-                          {i.reasons.join(" ")}
-                        </span>
-                      </p>
-                    ))
-                  ) : (
-                    <p>
-                      Add workers and service assignments to evaluate impact.
-                    </p>
-                  )}
-                </div>
-                <Review
-                  rule={rule}
-                  busy={busy}
-                  act={act}
-                  adopted={data.agency.adopted.includes(rule.id)}
-                  reviewed={review?.decision === "approved"}
-                />
-              </article>
-            );
+            const review = data.agency.reviews.find((r) => r.ruleId === rule.id);
+            const adopted = data.agency.adopted.includes(rule.id);
+            return <article className="card reg-rule-card" key={rule.id}>
+              <div className="card-head"><div><div className="eyebrow">{rule.jurisdiction} · {label(rule.topic)}{rule.demo ? " · Demo policy" : ""}</div><h3>{rule.title.replace(/^Demo: /, "").replace(/^./, (letter) => letter.toUpperCase())}</h3></div><span className={`tag ${adopted ? "reg-adopted" : ""}`}>{adopted ? "Adopted" : review?.decision === "approved" ? "Ready to adopt" : review?.decision === "rejected" ? "Rejected" : "Needs review"}</span></div>
+              <p className="reg-rule-obligation">{rule.demo ? rule.obligation.replace(/^SIMULATED COMPANY POLICY: /, "").replace(/ This is (a simulated company policy, not a verified legal requirement|not a verified law)\./, "") : rule.obligation}</p>
+              <div className="reg-rule-meta"><span>Effective {rule.effectiveFrom || "date unknown"}</span>{rule.deadline && <span>Due {rule.deadline}</span>}<span>{rule.impact.filter((i) => i.result === "applicable").length} {rule.subject === "agency" ? "company" : rule.impact.filter((i) => i.result === "applicable").length === 1 ? "worker" : "workers"} affected</span></div>
+              {rule.unresolved.length > 0 && <p className="reg-error">Review needed: {rule.unresolved.join("; ")}</p>}
+              <details className="reg-rule-details"><summary>Source & applicability</summary><p className="small muted">{rule.citation}</p><blockquote>{rule.quote}</blockquote><p className="small">Exceptions: {rule.exceptions || "Not specified. Check the source."}</p><div className="reg-impact">{rule.impact.map((i) => <p key={i.id}><strong>{i.name}: {label(i.result)}</strong><br /><span className="small muted">{i.reasons.join(" ")}</span></p>)}</div><Evidence id={rule.snapshotId} />{rule.previousId && <details><summary>Previous version</summary><p>{data.candidates.find((r) => r.id === rule.previousId)?.obligation || "Unavailable"}</p></details>}</details>
+              <Review rule={rule} busy={busy} act={act} adopted={adopted} reviewed={review?.decision === "approved"} />
+            </article>;
           })}
+          {archivedRules.length > 0 && <details className="reg-archive"><summary>Previous versions ({archivedRules.length})</summary>{archivedRules.map((rule) => <article className="card" key={rule.id}><h3>{rule.title.replace(/^Demo: /, "").replace(/^./, (letter) => letter.toUpperCase())}</h3><p className="small muted">Archived{rule.effectiveTo ? ` · Ended ${rule.effectiveTo}` : ""}</p><p>{rule.obligation}</p><details><summary>Source</summary><Evidence id={rule.snapshotId} /></details></article>)}</details>}
         </section>
       )}
       {tab === "onboarding" && (
@@ -500,53 +277,16 @@ export default function RegulatoryPage() {
           busy={busy}
         />
       )}
-      {tab === "checklist" && (
-        <>
-          <section className="card">
-            <h3>Agency and worker actions</h3>
-            {!data.agency.actions.length && (
-              <p>
-                No adopted obligations. Complete onboarding, review a sourced
-                obligation, and adopt the applicable version.
-              </p>
-            )}
-            {data.agency.actions.map((a) => (
-              <div className="reg-action" key={a.id}>
-                <div>
-                  <strong>{a.title}</strong>
-                  <p className="small muted">
-                    {a.workerId
-                      ? data.agency.workers.find((w) => w.id === a.workerId)
-                          ?.name
-                      : "Agency"}{" "}
-                    · {a.kind} · Due {a.due || "not specified"} · {a.status}
-                  </p>
-                </div>
-                {a.status === "open" && (
-                  <CompleteAction id={a.id} act={act} busy={busy} />
-                )}
-              </div>
-            ))}
-          </section>
-          <Checklist />
-        </>
-      )}
       {tab === "operations" && (
         <>
+          <section className="card reg-utilities"><h3>Activity</h3><p className="muted small">Source checks run in stages. A queued check may need more than one step.</p><div className="actions"><Button disabled={busy} onClick={async () => { setBusy(true); try { await api("process", {}); await refresh(); setMessage("Check advanced. See progress below."); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>Continue check</Button>{data.local && <Button disabled={busy} onClick={async () => { setBusy(true); try { await api("demo", {}); await refresh(); setTab("changes"); setMessage("Demo ready. Review the two active policies."); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>Reset demo</Button>}{!data.local && <Button onClick={async () => { await api("session", undefined, "DELETE"); setData(null); setAuth(true); }}>Sign out</Button>}</div></section>
           <section className="card">
-            <h3>Worker and usage</h3>
+            <h3>Source activity</h3>
             <p>Last worker tick: {date(data.scheduler.lastTick)}</p>
             <p>
               {data.usage.day || "No AI usage"} · {data.usage.calls}/
               {data.limits.calls} daily calls · {data.usage.tokens}/
               {data.limits.tokens} tokens reserved or consumed
-            </p>
-            <p className="small muted">
-              Run the persistent worker with{" "}
-              <code>npm run regulatory:worker</code>. A queue action does not
-              start an unattended process. Failed AI calls keep their
-              conservative token reservation. No Anthropic fallback is used by
-              regulatory extraction.
             </p>
             <Button onClick={refresh}>Refresh status</Button>
             <div className="table-wrap">
@@ -591,6 +331,7 @@ export default function RegulatoryPage() {
           </section>
         </>
       )}
+      </div>
     </Shell>
   );
 }
@@ -680,62 +421,18 @@ function Review({
     rule.unresolved.length > 0 ||
     !rule.effectiveFrom ||
     rule.legalStatus !== "enacted";
-  return (
-    <div className="reg-review">
-      <label>
-        Review notes
-        <textarea
-          className="input"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder="Confirm scope, exceptions, dates and required evidence against the official source."
-        />
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => setChecked(e.target.checked)}
-        />{" "}
-        I reviewed the source, dates, scope and exceptions for this exact
-        version.
-      </label>
-      <div className="actions">
-        <Button
-          disabled={busy || note.trim().length < 10 || adopted}
-          onClick={() =>
-            act({ type: "review", ruleId: rule.id, decision: "rejected", note })
-          }
-        >
-          Reject
-        </Button>
-        <Button
-          disabled={
-            busy || blocked || !checked || note.trim().length < 10 || adopted
-          }
-          onClick={() =>
-            act({ type: "review", ruleId: rule.id, decision: "approved", note })
-          }
-        >
-          Approve version
-        </Button>
-        <Button
-          variant="primary"
-          disabled={busy || adopted || !reviewed || blocked}
-          onClick={() =>
-            act({
-              type: "adopt",
-              ruleId: rule.id,
-              fingerprint: rule.fingerprint,
-            })
-          }
-        >
-          {adopted ? "Adopted" : "Adopt applicable obligations"}
-        </Button>
-      </div>
-    </div>
-  );
+  if (adopted) return <div className="reg-rule-footer"><span className="small muted">Requirements are available in Company.</span><a href="/regulatory">View requirements</a></div>;
+  const expired = Boolean(rule.effectiveTo && rule.effectiveTo <= new Date().toISOString().slice(0, 10));
+  const applicableNow = rule.impact.some((i) => i.result === "applicable") && !rule.impact.some((i) => i.result === "needs-review");
+  if (reviewed) return <div className="reg-rule-footer"><span className="small muted">{applicableNow ? "Review complete. Create the applicable requirements." : "Confirm dates and assignments before adoption."}</span><Button variant="primary" disabled={busy || blocked || expired || !applicableNow} onClick={() => act({ type: "adopt", ruleId: rule.id, fingerprint: rule.fingerprint })}>Adopt rule</Button></div>;
+  return <details className="reg-review-disclosure"><summary>Review rule</summary><div className="reg-review">
+    {blocked && <p className="reg-error">Resolve the source, dates or scope before approval.</p>}
+    <label>Review notes<textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Summarize your review (at least 10 characters)." /></label>
+    <label><input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />I checked the source, dates, scope and exceptions.</label>
+    <div className="actions"><Button variant="primary" disabled={busy || blocked || !checked || note.trim().length < 10 || expired} onClick={() => act({ type: "review", ruleId: rule.id, decision: "approved", note })}>Approve review</Button><Button variant="quiet" disabled={busy || note.trim().length < 10} onClick={() => act({ type: "review", ruleId: rule.id, decision: "rejected", note })}>Reject</Button></div>
+  </div></details>;
 }
+
 function Evidence({ id }: { id: string }) {
   const [text, setText] = useState("");
   return (
@@ -1200,248 +897,5 @@ function Onboarding({
         </Button>
       </form>
     </div>
-  );
-}
-function CompleteAction({
-  id,
-  act,
-  busy,
-}: {
-  id: string;
-  act: (b: unknown) => Promise<void>;
-  busy: boolean;
-}) {
-  const [note, setNote] = useState("");
-  return (
-    <div className="actions">
-      <input
-        className="input"
-        aria-label="Completion evidence or notes"
-        placeholder="Completion evidence / notes"
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-      />
-      <Button
-        disabled={busy || note.trim().length < 5}
-        onClick={() => act({ type: "action-complete", id, note })}
-      >
-        Record completion
-      </Button>
-    </div>
-  );
-}
-function Checklist() {
-  const [data, setData] = useState<Payload | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function load() {
-    try {
-      setData(await api("collection"));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  useEffect(() => {
-    void load();
-  }, []);
-  async function act(body: unknown) {
-    setBusy(true);
-    try {
-      setData(await api("collection-actions", body));
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <section className="card">
-      <h3>Worker document evidence</h3>
-      <p className="small muted">
-        Documents are retained per rule version. Staff must verify the original
-        and confirm the full obligation. Completing an action does not approve a
-        document.
-      </p>
-      {error && <p role="alert">{error}</p>}
-      {!data ? (
-        <p>Loading checklist…</p>
-      ) : data.db.requirements.length === 0 ? (
-        <p>No adopted worker document requirements.</p>
-      ) : (
-        data.db.requirements.map((item) => {
-          const cg = data.db.caregivers.find((c) => c.id === item.caregiverId)!;
-          const req = data.db.rules.requirements.find(
-            (r) => r.id === item.requirementId,
-          )!;
-          const sub = data.db.submissions.find(
-            (s) =>
-              s.id === (item.openSubmissionId || item.approvedSubmissionId),
-          );
-          return (
-            <article
-              className="reg-check-item"
-              key={item.caregiverId + item.requirementId}
-            >
-              <div className="card-head">
-                <h4>
-                  {cg.name} · {req.name}
-                </h4>
-                <StatusBadge status={item.status} />
-              </div>
-              <p className="small">{req.rule}</p>
-              {sub ? (
-                <>
-                  <p>
-                    {sub.files.map((f) => (
-                      <a
-                        key={f.url}
-                        href={f.url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {f.name}
-                      </a>
-                    ))}
-                  </p>
-                  {sub.fields.map((f) => (
-                    <div className="reg-field" key={f.key}>
-                      <div>
-                        <strong>{f.label}</strong>
-                        <p>{f.value}</p>
-                        <small>
-                          {f.source === "verified"
-                            ? "Verified"
-                            : "Needs verification"}
-                        </small>
-                      </div>
-                      <Button
-                        disabled={
-                          busy ||
-                          f.source === "verified" ||
-                          sub.state === "approved"
-                        }
-                        onClick={() =>
-                          act({
-                            type: "verify-field",
-                            submissionId: sub.id,
-                            key: f.key,
-                          })
-                        }
-                      >
-                        Verify
-                      </Button>
-                    </div>
-                  ))}
-                  <Button
-                    variant="primary"
-                    disabled={
-                      busy ||
-                      sub.state === "approved" ||
-                      sub.fields.some(
-                        (f) => f.source !== "verified" && f.source !== "edited",
-                      )
-                    }
-                    onClick={() =>
-                      act({ type: "approve", submissionId: sub.id })
-                    }
-                  >
-                    Approve evidence
-                  </Button>
-                  <Button
-                    disabled={busy || sub.state === "approved"}
-                    onClick={() =>
-                      act({
-                        type: "reject",
-                        submissionId: sub.id,
-                        reason:
-                          "Evidence does not establish the full obligation.",
-                      })
-                    }
-                  >
-                    Reject evidence
-                  </Button>
-                </>
-              ) : null}
-              <EvidenceForm
-                caregiverId={cg.id}
-                requirementId={req.id}
-                onSubmit={act}
-                busy={busy}
-              />
-            </article>
-          );
-        })
-      )}
-    </section>
-  );
-}
-function EvidenceForm({
-  caregiverId,
-  requirementId,
-  onSubmit,
-  busy,
-}: {
-  caregiverId: string;
-  requirementId: string;
-  onSubmit: (b: unknown) => Promise<void>;
-  busy: boolean;
-}) {
-  const [error, setError] = useState("");
-  const [uploading, setUploading] = useState(false);
-  return (
-    <details>
-      <summary>Submit new evidence</summary>
-      <form
-        className="reg-form"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setUploading(true);
-          try {
-            const form = new FormData(e.currentTarget);
-            const response = await fetch("/api/regulatory/upload", {
-              method: "POST",
-              body: form,
-            });
-            const uploaded = await response.json();
-            if (!response.ok) throw new Error(uploaded.error);
-            await onSubmit({
-              type: "evidence-submit",
-              caregiverId,
-              requirementId,
-              fileId: uploaded.id,
-              notes: form.get("notes"),
-              date: form.get("date"),
-            });
-          } catch (e) {
-            setError((e as Error).message);
-          } finally {
-            setUploading(false);
-          }
-        }}
-      >
-        <label>
-          Original evidence
-          <input
-            type="file"
-            name="file"
-            accept="application/pdf,image/png,image/jpeg,image/webp"
-            required
-          />
-        </label>
-        <label>
-          Evidence date
-          <input className="input" type="date" name="date" required />
-        </label>
-        <label>
-          How the evidence satisfies the full obligation
-          <textarea className="input" name="notes" minLength={10} required />
-        </label>
-        {error && <p role="alert">{error}</p>}
-        <Button type="submit" disabled={busy || uploading}>
-          Submit for human verification
-        </Button>
-      </form>
-    </details>
   );
 }

@@ -32,6 +32,8 @@ export function Shell({
   onDismiss?: () => void;
 }) {
   const path = usePathname();
+  const regulatory = path.startsWith("/regulatory");
+  const links = regulatory ? [["/regulatory", "Company"], ["/regulatory/watch", "Regulatory watch"]] as const : NAV;
   const [unread, setUnread] = useState(0);
   useEffect(() => {
     let active = true;
@@ -57,7 +59,7 @@ export function Shell({
     <>
       <header className="topbar">
         <div className="topbar-inner">
-          <Link href="/" className="brand">
+          <Link href={regulatory ? "/regulatory" : "/"} className="brand">
             <span className="brand-mark" aria-hidden="true">
               <svg
                 width="22"
@@ -75,13 +77,15 @@ export function Shell({
             PaperEase
           </Link>
           <nav className="nav">
-            {NAV.map(([href, label]) => (
+            {links.map(([href, label]) => (
               <Link
                 key={href}
                 href={href}
                 className={
                   (
-                    href === "/"
+                    regulatory
+                      ? href === "/regulatory" ? path === href : path.startsWith(href)
+                      : href === "/"
                       ? path === "/" || path.startsWith("/caregivers")
                       : path.startsWith(href)
                   )
