@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Button } from '@/components/ui';
+import { BrandMark, BrandName } from '@/components/Logo';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -28,13 +29,8 @@ export default function LoginPage() {
   return (
     <main className="login">
       <div className="brand login-brand">
-        <span className="brand-mark" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round">
-            <path d="M17 7.5A7 7 0 1 0 18 12" />
-            <path d="M17.5 3.5v4.25h-4.25" />
-          </svg>
-        </span>
-        PaperEase
+        <BrandMark size={40} />
+        <BrandName />
       </div>
       <form className="card login-card" onSubmit={submit}>
         <h2>Sign in</h2>
