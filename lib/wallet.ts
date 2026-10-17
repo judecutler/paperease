@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { isUnconfirmed } from './fields';
+import { extraNo, extraYes, packFor, type WalletKind } from './languages';
 import { splitName, foldName } from './registry';
 import type { AuditEvent, Caregiver, Db, RequirementState, Submission } from './types';
 
@@ -177,18 +178,11 @@ export function importCredentials(db: Db, cg: Caregiver, creds: WalletCredential
 
 /* ---------- caregiver-facing copy ---------- */
 
-export type WalletSms = 'share-ask' | 'import-ask' | 'share-ok' | 'import-ok' | 'declined';
+export type WalletSms = WalletKind;
 export function walletSms(kind: WalletSms, cg: Pick<Caregiver, 'firstName' | 'language'>, agency: string): string {
   const f = cg.firstName;
-  if (cg.language === 'es') {
-    switch (kind) {
-      case 'share-ask': return `¡Hola ${f}! ${agency} puede guardar tus registros verificados en tu cartera CareLoop para que otras agencias donde trabajes no te los pidan otra vez. Tú decides. Responde SI para permitirlo, o ignora este mensaje.`;
-      case 'import-ask': return `¡Hola ${f}! ${agency} encontró registros verificados en tu cartera CareLoop de otra agencia. Responde SI para que ${agency} los use (no tendrás que enviar fotos otra vez), o NO.`;
-      case 'share-ok': return `¡Listo, ${f}! Guardamos tus registros verificados. Puedes pedirle a ${agency} que los quite cuando quieras.`;
-      case 'import-ok': return `¡Gracias, ${f}! ${agency} usará esos registros y la oficina los confirmará.`;
-      case 'declined': return `De acuerdo, ${f}. No se compartirá nada.`;
-    }
-  }
+  const pack = packFor(cg.language);
+  if (pack) return pack.wallet[kind]({ f, agency });
   switch (kind) {
     case 'share-ask': return `Hi ${f}! ${agency} can save your verified records to your CareLoop wallet so other agencies you work for don't ask for them again. It's your call. Reply YES to allow, or ignore this.`;
     case 'import-ask': return `Hi ${f}! ${agency} found verified records in your CareLoop wallet from another agency. Reply YES to let ${agency} use them (no need to resend photos), or NO.`;
@@ -198,10 +192,11 @@ export function walletSms(kind: WalletSms, cg: Pick<Caregiver, 'firstName' | 'la
   }
 }
 
-const YES = /^\s*(yes|y|yep|ok|okay|si|sí|sure|allow|compartir|share)\s*[.!]*\s*$/i;
-const NO = /^\s*(no|n|nope|deny)\s*[.!]*\s*$/i;
-export const isYes = (t: string) => YES.test(t);
-export const isNo = (t: string) => NO.test(t);
+const word = (t: string) => t.trim().replace(/[.!！。\s]+$/g, '').toLowerCase();
+const YES = ['yes', 'y', 'yep', 'ok', 'okay', 'sure', 'allow', 'share', 'compartir'];
+const NO = ['no', 'n', 'nope', 'deny'];
+export const isYes = (t: string) => [...YES, ...extraYes()].includes(word(t));
+export const isNo = (t: string) => [...NO, ...extraNo()].includes(word(t));
 
 /* ---------- demo data ---------- */
 

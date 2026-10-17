@@ -1,5 +1,6 @@
 import { load, newId, readDoc, save, reset, writeDoc } from './db';
-import { draftSms, extractDocument, interpretReply, isOptOut, type SmsKind } from './llm';
+import { draftSms, extractDocument, interpretReply, isOptOut, templateSms, type SmsKind } from './llm';
+import { isLangCode, languageLabel } from './languages';
 import { findSample } from './samples';
 import { isUnconfirmed } from './fields';
 import {
@@ -8,7 +9,7 @@ import {
 } from './wallet';
 import { approvalBlocker, findPerIdInText, needsRegistryCheck, REGISTRY_REASON_PREFIX, registryEscalation } from './registry';
 import { checkRegistry, manualRegistryCheck } from './registry-providers';
-import type { Actor, Caregiver, Db, ExtractedFieldValue, RegistryStatus, RequirementState, RequirementType, Submission, SubmissionFile } from './types';
+import type { Actor, Caregiver, LangCode, Db, ExtractedFieldValue, RegistryStatus, RequirementState, RequirementType, Submission, SubmissionFile } from './types';
 
 export type Action =
   | { type: 'run-gap-check' }
@@ -24,7 +25,7 @@ export type Action =
   | { type: 'request-another'; submissionId: string }
   | { type: 'check-registry'; submissionId: string }
   | { type: 'record-registry-check'; submissionId: string; result: RegistryStatus | 'NOT_FOUND' }
-  | { type: 'add-caregiver'; name: string; phone: string; language: 'en' | 'es' }
+  | { type: 'add-caregiver'; name: string; phone: string; language: LangCode }
   | { type: 'update-rules'; expiringWithinDays: number; minConfidence: number; maxFollowUps: number; autoRequest: boolean; reminderAfterDays: number; maxReminders: number }
   | { type: 'export-packet'; caregiverId: string }
   | { type: 'wallet-offer-share'; caregiverId: string }
@@ -266,7 +267,7 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
   c.log({ caregiverId: cg.id, requirementId: state?.requirementId, actor: 'caregiver', who: cg.name, action: file ? 'replied with a photo' : 'replied by text', detail: file ? file.name : `"${text}"` });
   if (!state) {
     c.log({ caregiverId: cg.id, actor: 'agent', action: 'escalated an unexpected message', detail: 'No open request for this caregiver. Left for staff.' });
-    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: cg.language === 'es' ? `¡Gracias, ${cg.firstName}! Se lo paso a la oficina.` : `Thanks, ${cg.firstName}! I'll pass this to the office.`, time: now() });
+    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: templateSms('passed-on', { caregiver: cg, requirement: c.db.rules.requirements[0] }), time: now() });
     return;
   }
   const req = c.req(state.requirementId);
@@ -346,7 +347,7 @@ async function authorize(c: Ctx, caregiverId: string, requirementId: string, by:
   if (by === 'admin') c.log({ caregiverId, requirementId, actor: 'admin', who: c.db.agency.admin, action: 'authorized outreach' });
   else c.log({ caregiverId, requirementId, actor: 'system', action: 'authorized outreach by rule', detail: 'Automatic requests are on in Rules.' });
   await c.sms('request', cg, req);
-  c.log({ caregiverId, requirementId, actor: 'agent', action: cg.language === 'es' ? 'sent an SMS request in Spanish' : 'sent an SMS request', detail: cg.phone });
+  c.log({ caregiverId, requirementId, actor: 'agent', action: cg.language === 'en' ? 'sent an SMS request' : `sent an SMS request in ${languageLabel(cg.language)}`, detail: cg.phone });
   return true;
 }
 
@@ -662,6 +663,7 @@ export async function run(action: Action, suppliedDb?: Db): Promise<Db> {
     case 'add-caregiver': {
       const name = action.name.trim();
       if (!name) throw new Error('Name is required.');
+      if (!isLangCode(action.language)) throw new Error('Unsupported language.');
       const id = newId('cg');
       db.caregivers.push({ id, name, firstName: name.split(/\s+/)[0], phone: action.phone.trim(), language: action.language, hiredOn: now().slice(0, 10), smsConsent: true });
       for (const r of db.rules.requirements) {

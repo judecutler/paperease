@@ -5,7 +5,8 @@ import { useState } from 'react';
 import { Shell } from '@/components/Shell';
 import { Button, Icon, ReadinessMeter, StatusBadge } from '@/components/ui';
 import { dateLabel, timeLabel, useCareLoop } from '@/components/useCareLoop';
-import type { DocStatus } from '@/lib/types';
+import { LANG_CODES, LANG_LABELS, languageLabel, packFor } from '@/lib/languages';
+import type { DocStatus, LangCode } from '@/lib/types';
 
 const SHORT: Record<string, string> = {
   hca_registration: 'HCA reg.',
@@ -22,7 +23,7 @@ export default function Dashboard() {
   const { data, busy, error, setError, act } = useCareLoop();
   const router = useRouter();
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ name: '', phone: '', language: 'en' as 'en' | 'es' });
+  const [form, setForm] = useState({ name: '', phone: '', language: 'en' as LangCode });
 
   if (!data) return <Shell error={error}><p className="loading">Loading agency records…</p></Shell>;
   const { db } = data;
@@ -114,11 +115,15 @@ export default function Dashboard() {
             <label>Full name<input className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Rosa Martinez" /></label>
             <label>Mobile number<input className="input" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="(213) 555-0100" /></label>
             <label>SMS language
-              <select className="input" value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value as 'en' | 'es' })}>
-                <option value="en">English</option>
-                <option value="es">Spanish</option>
+              <select className="input" value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value as LangCode })}>
+                {LANG_CODES.map((code) => <option key={code} value={code}>{LANG_LABELS[code]}{packFor(code) && !packFor(code)!.reviewed ? ' (draft copy)' : ''}</option>)}
               </select>
             </label>
+            {packFor(form.language) && !packFor(form.language)!.reviewed && (
+              <p className="small muted" style={{ flexBasis: '100%' }}>
+                {LANG_LABELS[form.language]} messages are machine-drafted and have not been reviewed by a native speaker. Have one read them before texting real caregivers.
+              </p>
+            )}
             <Button type="submit" variant="secondary" disabled={busy}>Add and check documents</Button>
             <p className="small muted" style={{ flexBasis: '100%' }}>Adding a caregiver records SMS consent for the demo. In production, consent is collected before the first text.</p>
           </form>
@@ -137,7 +142,7 @@ export default function Dashboard() {
                   <td className="name">
                     <Link href={`/caregivers/${cg.id}`} onClick={(e) => e.stopPropagation()}>{cg.name}</Link>
                     <div className="small muted">
-                      {cg.language === 'es' ? 'Spanish' : 'English'} · hired {dateLabel(cg.hiredOn)}
+                      {languageLabel(cg.language)} · hired {dateLabel(cg.hiredOn)}
                       {cg.optedOut ? ' · opted out of SMS' : ''}
                     </div>
                   </td>

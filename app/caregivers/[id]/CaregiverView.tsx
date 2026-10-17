@@ -7,6 +7,7 @@ import { RegistryCheckCard } from '@/components/RegistryCheck';
 import { dateLabel, timeLabel, useCareLoop } from '@/components/useCareLoop';
 import { approvalBlocker, needsRegistryCheck } from '@/lib/registry';
 import { isUnconfirmed } from '@/lib/fields';
+import { languageLabel } from '@/lib/languages';
 import type { Action } from '@/lib/agent';
 import type { Payload } from '@/lib/payload';
 import type { ExtractedFieldValue, RequirementState, RequirementType, Submission } from '@/lib/types';
@@ -48,7 +49,7 @@ export function CaregiverView({ id, initialReq }: { id: string; initialReq?: str
           <div className="eyebrow"><Link href="/">Dashboard</Link> / Caregiver</div>
           <h1>{cg.name}</h1>
           <p className="muted small" style={{ marginTop: 4 }}>
-            <span className="cl-data">{cg.phone}</span> · SMS in {cg.language === 'es' ? 'Spanish' : 'English'} · hired {dateLabel(cg.hiredOn)} ·{' '}
+            <span className="cl-data">{cg.phone}</span> · SMS in {languageLabel(cg.language)} · hired {dateLabel(cg.hiredOn)} ·{' '}
             {cg.optedOut ? 'opted out of texts' : cg.smsConsent ? 'agreed to texts' : 'no SMS consent'}
           </p>
         </div>

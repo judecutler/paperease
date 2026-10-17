@@ -7,6 +7,9 @@ export type DocStatus =
   | 'expiring'
   | 'approved';
 
+/** Languages the agent can text in. Add one in lib/languages.ts. */
+export type LangCode = 'en' | 'es' | 'tl' | 'vi' | 'zh';
+
 export type Actor = 'agent' | 'admin' | 'caregiver' | 'system';
 
 export interface FieldSpec {
@@ -54,7 +57,7 @@ export interface Caregiver {
   name: string;
   firstName: string;
   phone: string;
-  language: 'en' | 'es';
+  language: LangCode;
   hiredOn: string;
   smsConsent: boolean;
   optedOut?: boolean;

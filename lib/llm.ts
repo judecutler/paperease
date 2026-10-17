@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { AiStatus, Caregiver, RequirementType } from './types';
 import { findSample } from './samples';
 import { readUpload } from './db';
+import { extraStop, languageLabel, packFor } from './languages';
 
 // Every AI call sits behind an env key and falls back to deterministic behavior,
 // so the demo runs end to end with no keys at all.
@@ -30,26 +31,7 @@ export function aiStatus(): AiStatus {
 
 /* ---------------- SMS copy ---------------- */
 
-export type SmsKind = 'request' | 'follow-up' | 'thanks' | 'escalated' | 'wrong-doc' | 'reminder' | 'request-another' | 'opted-out' | 'approved';
-
-const ASK_ES: Record<string, string> = {
-  hca_registration: 'una foto de tu registro de Home Care Aide',
-  tb_test: 'una foto de tu resultado más reciente de la prueba de TB',
-  initial_training: 'tu certificado de capacitación inicial',
-  annual_training: 'tu certificado de capacitación anual',
-  background_check: 'tu verificación de antecedentes',
-};
-
-const FIELD_ES: Record<string, string> = {
-  hours: 'las horas de capacitación',
-  completion_date: 'la fecha de finalización',
-  course: 'el nombre del curso',
-  expiration_date: 'la fecha de vencimiento',
-  registration_number: 'el número de registro',
-  test_date: 'la fecha de la prueba',
-  result: 'el resultado',
-  name: 'tu nombre',
-};
+export type SmsKind = 'request' | 'follow-up' | 'thanks' | 'escalated' | 'wrong-doc' | 'reminder' | 'request-another' | 'opted-out' | 'approved' | 'passed-on';
 
 export interface SmsContext {
   caregiver: Caregiver;
@@ -60,23 +42,15 @@ export interface SmsContext {
 
 export function templateSms(kind: SmsKind, c: SmsContext): string {
   const first = c.caregiver.firstName;
-  const es = c.caregiver.language === 'es';
-  const ask = es ? ASK_ES[c.requirement.id] || c.requirement.ask : c.requirement.ask;
+  const pack = packFor(c.caregiver.language);
   const doc = (c.documentType || 'document').toLowerCase();
-  const field = c.missingField ? (es ? FIELD_ES[c.missingField.key] || c.missingField.label.toLowerCase() : c.missingField.label.toLowerCase()) : '';
-  if (es) {
-    switch (kind) {
-      case 'request': return `¡Hola ${first}! Tu agencia necesita ${ask}. ¿Puedes responder con una foto?`;
-      case 'follow-up': return `¡Gracias, ${first}! No encontré ${field} en este documento. ¿Tienes otro documento que lo muestre? También puedes responder con el dato.`;
-      case 'thanks': return `¡Listo, gracias ${first}! La oficina lo revisará.`;
-      case 'escalated': return `¡Gracias, ${first}! Alguien de la oficina lo revisará y te contactará.`;
-      case 'wrong-doc': return `¡Gracias, ${first}! Esto parece ser otro documento. Necesitamos ${ask}. ¿Puedes enviarlo?`;
-      case 'reminder': return `Hola ${first}, un recordatorio: tu agencia todavía necesita ${ask}. Responde con una foto cuando puedas.`;
-      case 'request-another': return `Hola ${first}, la oficina no pudo usar la imagen anterior. ¿Puedes enviar otra vez ${ask}, con una foto clara?`;
-      case 'opted-out': return 'Ya no recibirás mensajes de CareLoop. Tu agencia te contactará directamente.';
-      case 'approved': return `¡Gracias, ${first}! Tu documento fue aprobado. No necesitas hacer nada más.`;
-    }
+  if (pack) {
+    const ask = pack.ask[c.requirement.id] || c.requirement.ask;
+    const field = c.missingField ? pack.field[c.missingField.key] || c.missingField.label.toLowerCase() : '';
+    return pack.sms[kind]({ first, ask, field, doc });
   }
+  const ask = c.requirement.ask;
+  const field = c.missingField ? c.missingField.label.toLowerCase() : '';
   switch (kind) {
     case 'request': return `Hi ${first}! Your agency needs ${ask}. Could you reply with a photo?`;
     case 'follow-up': return `Thanks, ${first}! I couldn't find the ${field} on this ${doc}. Do you have another document showing them? You can also just reply with it.`;
@@ -87,6 +61,7 @@ export function templateSms(kind: SmsKind, c: SmsContext): string {
     case 'request-another': return `Hi ${first}, the office couldn't use the last one. Could you send ${ask} again as a clear photo?`;
     case 'opted-out': return "You're unsubscribed from CareLoop texts. Your agency will contact you directly.";
     case 'approved': return `Thanks, ${first}! Your document is approved. Nothing else needed.`;
+    case 'passed-on': return `Thanks, ${first}! I'll pass this to the office.`;
   }
 }
 
@@ -97,9 +72,9 @@ Only use facts given to you. Return the SMS text only, no quotes.`;
 
 export async function draftSms(kind: SmsKind, c: SmsContext): Promise<string> {
   const fallback = templateSms(kind, c);
-  if (kind === 'opted-out') return fallback;
+  if (kind === 'opted-out' || kind === 'passed-on') return fallback;
   const prompt = `Caregiver first name: ${c.caregiver.firstName}
-Language: ${c.caregiver.language === 'es' ? 'Spanish' : 'English'}
+Language: ${languageLabel(c.caregiver.language)}
 Message purpose: ${kind}
 Document needed: ${c.requirement.name} (${c.requirement.ask})
 ${c.missingField ? `Field we could not find: ${c.missingField.label}\n` : ''}${c.documentType ? `Document they sent looked like: ${c.documentType}\n` : ''}Reference message to adapt: ${fallback}`;
@@ -246,9 +221,9 @@ export async function extractDocument(req: RequirementType, fileUrl: string, sam
 
 /* ---------------- Reply interpretation ---------------- */
 
-const OPT_OUT = /^\s*(stop|unsubscribe|cancel|quit|alto|parar)\s*$/i;
+const STOP_WORDS = ['stop', 'stopall', 'unsubscribe', 'cancel', 'end', 'quit', ...extraStop()];
 export function isOptOut(text: string) {
-  return OPT_OUT.test(text);
+  return STOP_WORDS.includes(text.trim().replace(/[.!\s]+$/g, '').toLowerCase());
 }
 
 const ReplySchema = z.object({
