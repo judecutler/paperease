@@ -96,7 +96,7 @@ describe('end to end with a stubbed Twilio', () => {
         sent.push({ to: init.body.get('To'), body: init.body.get('Body') });
         return new Response(JSON.stringify({ sid: 'SM' + sent.length, status: 'queued' }), { status: 201 });
       }
-      if (u.includes('/Media/')) return new Response(mediaBytes, { headers: { 'content-type': 'image/png' } });
+      if (u.includes('/Media/')) return new Response(new Uint8Array(mediaBytes), { headers: { 'content-type': 'image/png' } });
       throw new Error('unexpected fetch ' + u);
     }) as any;
     await run({ type: 'reset' });
