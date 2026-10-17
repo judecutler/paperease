@@ -1,7 +1,8 @@
 import { load, newId, save, reset } from './db';
 import { draftSms, extractDocument, interpretReply, isOptOut, type SmsKind } from './llm';
 import { findSample } from './samples';
-import type { Actor, Caregiver, Db, ExtractedFieldValue, RequirementState, RequirementType, Submission, SubmissionFile } from './types';
+import { inspectPhoto, sameCaregiverName, uncheckedPhoto } from './photo-check';
+import type { Actor, Caregiver, Db, ExtractedFieldValue, RequirementState, RequirementType, SmsMessage, Submission, SubmissionFile } from './types';
 
 export type Action =
   | { type: 'run-gap-check' }
@@ -9,7 +10,7 @@ export type Action =
   | { type: 'authorize-outreach'; caregiverId: string; requirementId: string }
   | { type: 'authorize-all' }
   | { type: 'send-reminder'; caregiverId: string; requirementId: string }
-  | { type: 'caregiver-reply'; caregiverId: string; text?: string; sampleId?: string; upload?: SubmissionFile }
+  | { type: 'caregiver-reply'; caregiverId: string; requirementId?: string; text?: string; sampleId?: string; upload?: SubmissionFile }
   | { type: 'verify-field'; submissionId: string; key: string }
   | { type: 'edit-field'; submissionId: string; key: string; value: string }
   | { type: 'approve'; submissionId: string }
@@ -94,13 +95,6 @@ export function detectGaps(db: Db) {
 
 /* ---------------- record evaluation ---------------- */
 
-const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z ]/g, '').trim();
-function sameName(a: string, b: string) {
-  const ta = norm(a).split(/\s+/);
-  const tb = norm(b).split(/\s+/);
-  return ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1];
-}
-
 export function unverifiedCount(sub: Submission) {
   return sub.fields.filter((f) => (f.value !== null && (f.source === 'ai' || f.source === 'caregiver')) || (f.required && f.value === null)).length;
 }
@@ -110,7 +104,7 @@ type Verdict = { kind: 'ready' } | { kind: 'follow-up'; field: ExtractedFieldVal
 function evaluate(c: Ctx, sub: Submission, cg: Caregiver, req: RequirementType): Verdict {
   const minConf = c.db.rules.minConfidence;
   const name = sub.fields.find((f) => f.key === 'name');
-  if (name?.value && (name.confidence ?? 1) >= minConf && !sameName(name.value, cg.name)) {
+  if (name?.value && (name.confidence ?? 1) >= minConf && !sameCaregiverName(name.value, cg.name)) {
     return { kind: 'escalate', reason: `The document is in the name "${name.value}", which does not match ${cg.name}.` };
   }
   const low = sub.fields.find((f) => f.required && f.value !== null && f.source === 'ai' && (f.confidence ?? 1) < minConf);
@@ -119,7 +113,7 @@ function evaluate(c: Ctx, sub: Submission, cg: Caregiver, req: RequirementType):
   if (req.minHours && hours?.value && Number(hours.value) < req.minHours) {
     return { kind: 'escalate', reason: `${hours.source === 'caregiver' ? `${cg.firstName} reported` : 'The document shows'} ${hours.value} training hours; this requirement needs at least ${req.minHours}.` };
   }
-  const missing = sub.fields.find((f) => f.required && f.value === null);
+  const missing = sub.fields.find((f) => f.required && !f.value?.trim());
   if (missing) {
     if (sub.followUps >= c.db.rules.maxFollowUps) {
       return { kind: 'escalate', reason: `${missing.label} is still missing after ${sub.followUps} follow-ups.` };
@@ -155,10 +149,11 @@ async function applyVerdict(c: Ctx, v: Verdict, sub: Submission, state: Requirem
 
 /* ---------------- caregiver replies ---------------- */
 
-function openStateFor(c: Ctx, cgId: string) {
+function openStateFor(c: Ctx, cgId: string, requirementId?: string) {
   const open = c.db.requirements.filter((s) => s.caregiverId === cgId && OPEN.includes(s.status) && s.openSubmissionId);
-  // most recently opened request first
-  return open.sort((a, b) => c.sub(b.openSubmissionId!).createdAt.localeCompare(c.sub(a.openSubmissionId!).createdAt))[0];
+  if (requirementId) return open.find((s) => s.requirementId === requirementId);
+  // Never silently attach a reply to the wrong request when several are open.
+  return open.length === 1 ? open[0] : undefined;
 }
 
 async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-reply' }>) {
@@ -166,9 +161,11 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
   const sample = a.sampleId ? findSample(a.sampleId) : undefined;
   const file: SubmissionFile | undefined = a.upload ?? (sample ? { name: sample.file.split('/').pop()!, url: sample.file, mime: 'image/png' } : undefined);
   const text = a.text?.trim();
-  c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'caregiver', text: text || undefined, attachment: file, time: now() });
+  const message: SmsMessage = { id: newId('msg'), caregiverId: cg.id, from: 'caregiver', text: text || undefined, attachment: file, time: now() };
+  c.db.messages.push(message);
 
   if (text && isOptOut(text)) {
+    if (file) message.photoCheck = uncheckedPhoto('This attachment was not analyzed because the message opted out of SMS. Contact agency staff.');
     cg.optedOut = true;
     c.log({ caregiverId: cg.id, actor: 'caregiver', who: cg.name, action: 'opted out of SMS', detail: `Replied "${text}".` });
     for (const s of c.db.requirements.filter((x) => x.caregiverId === cg.id && OPEN.includes(x.status))) {
@@ -180,23 +177,41 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
     return;
   }
 
-  const state = openStateFor(c, cg.id);
+  if (file && (!cg.smsConsent || cg.optedOut)) {
+    message.photoCheck = uncheckedPhoto('SMS document collection is not enabled for this caregiver. Contact agency staff.');
+    c.log({ caregiverId: cg.id, actor: 'agent', action: 'left an attachment for staff', detail: message.photoCheck.summary });
+    return;
+  }
+
+  const state = openStateFor(c, cg.id, a.requirementId);
   c.log({ caregiverId: cg.id, requirementId: state?.requirementId, actor: 'caregiver', who: cg.name, action: file ? 'replied with a photo' : 'replied by text', detail: file ? file.name : `"${text}"` });
   if (!state) {
-    c.log({ caregiverId: cg.id, actor: 'agent', action: 'escalated an unexpected message', detail: 'No open request for this caregiver. Left for staff.' });
-    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: cg.language === 'es' ? `¡Gracias, ${cg.firstName}! Se lo paso a la oficina.` : `Thanks, ${cg.firstName}! I'll pass this to the office.`, time: now() });
+    const reason = a.requirementId
+      ? 'The selected document request is no longer open. Ask staff to open a request before sending another photo.'
+      : 'Choose one open document request before sending a photo. This attachment was left for staff and was not analyzed.';
+    if (file) message.photoCheck = uncheckedPhoto(reason);
+    c.log({ caregiverId: cg.id, actor: 'agent', action: 'left an unmatched message for staff', detail: reason });
+    c.db.messages.push({ id: newId('msg'), caregiverId: cg.id, from: 'agent', text: cg.language === 'es' ? 'Selecciona una solicitud de documento abierta o contacta a la oficina.' : 'Please select an open document request or contact the office.', time: now() });
     return;
   }
   const req = c.req(state.requirementId);
   const sub = c.sub(state.openSubmissionId!);
 
   if (file) {
+    if (!req.smsCollectible) {
+      message.photoCheck = uncheckedPhoto('This document must be collected directly by agency staff.', req.name);
+      return;
+    }
     sub.files.push(file);
     const ex = await extractDocument(req, file.url, a.sampleId);
+    message.photoCheck = inspectPhoto({ caregiver: cg, requirement: req, extraction: ex, minConfidence: c.db.rules.minConfidence, existingFields: sub.fields });
+    c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'checked an uploaded photo', detail: `${message.photoCheck.status} (${message.photoCheck.source}): ${message.photoCheck.summary}` });
+    // Even a rejected/unreadable first photo leaves required blanks for staff
+    // to fill; an empty field array must never make approval look available.
+    if (!sub.fields.length) sub.fields = req.fields.map((f) => ({ key: f.key, label: f.label, required: f.required, value: null, source: 'ai' }));
     sub.extractedBy = ex.by === 'none' ? sub.extractedBy : ex.by;
     if (!ex.readable) {
       // keep whatever fields we have so the admin can fill them in by hand
-      if (!sub.fields.length) sub.fields = req.fields.map((f) => ({ key: f.key, label: f.label, required: f.required, value: null, source: 'ai' }));
       c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: 'could not read the document', detail: ex.note });
       return applyVerdict(c, { kind: 'escalate', reason: ex.note || 'The document could not be read.' }, sub, state, cg, req);
     }
@@ -211,13 +226,20 @@ async function caregiverReply(c: Ctx, a: Extract<Action, { type: 'caregiver-repl
       await c.sms('wrong-doc', cg, req, { documentType: ex.documentType });
       return;
     }
+    // Check this attachment before merging, so an earlier value cannot hide a
+    // conflicting name, low-confidence reading, or invalid training hours.
+    if (message.photoCheck.status === 'needs-review') {
+      const reason = message.photoCheck.checks.filter((item) => item.status === 'attention').map((item) => item.detail).join(' ');
+      return applyVerdict(c, { kind: 'escalate', reason: reason || message.photoCheck.summary }, sub, state, cg, req);
+    }
     // merge: new values fill fields that are still empty, so a second document can complete the first
     const prev = new Map(sub.fields.map((f) => [f.key, f]));
     sub.fields = req.fields.map((spec) => {
       const old = prev.get(spec.key);
       const got = ex.fields[spec.key];
-      if (old?.value) return old;
-      return { key: spec.key, label: spec.label, required: spec.required, value: got?.value ?? null, source: 'ai', confidence: got?.value ? got.confidence : undefined, sourceRef: got?.value ? `${file.name} · ${got.sourceRef ?? 'p.1'}` : undefined };
+      if (old?.value?.trim()) return old;
+      const value = got?.value?.trim() || null;
+      return { key: spec.key, label: spec.label, required: spec.required, value, source: 'ai', confidence: value ? got.confidence : undefined, sourceRef: value ? `${file.name} · ${got.sourceRef ?? 'p.1'}` : undefined };
     });
     const filled = sub.fields.filter((f) => f.value).length;
     c.log({ caregiverId: cg.id, requirementId: req.id, actor: 'agent', action: `extracted ${filled} of ${sub.fields.length} fields`, detail: [ex.by === 'claude' ? 'Read by Claude.' : 'Demo extraction.', ex.note].filter(Boolean).join(' ') });
@@ -383,8 +405,9 @@ export async function run(action: Action): Promise<Db> {
     }
     case 'approve': {
       const sub = c.sub(action.submissionId);
-      if (unverifiedCount(sub) > 0) throw new Error('Every field must be verified by a person before approval.');
       const req = c.req(sub.requirementId);
+      const requiredMissing = req.fields.some((spec) => spec.required && !sub.fields.find((field) => field.key === spec.key)?.value?.trim());
+      if (requiredMissing || unverifiedCount(sub) > 0) throw new Error('Every field must be verified by a person before approval.');
       const cg = c.caregiver(sub.caregiverId);
       const state = c.state(sub.caregiverId, sub.requirementId);
       const val = (k: string) => sub.fields.find((f) => f.key === k)?.value || undefined;

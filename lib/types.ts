@@ -109,7 +109,27 @@ export interface SmsMessage {
   from: 'agent' | 'admin' | 'caregiver';
   text?: string;
   attachment?: SubmissionFile;
+  /** Saved per-attachment snapshot, distinct from final staff approval. Older messages may have no check. */
+  photoCheck?: PhotoCheck;
   time: string;
+}
+
+export interface PhotoCheckItem {
+  id: 'readability' | 'document-type' | 'name' | 'confidence' | 'required-fields' | 'training-hours';
+  label: string;
+  status: 'pass' | 'attention' | 'not-checked';
+  detail: string;
+}
+
+export interface PhotoCheck {
+  status: 'ready' | 'needs-info' | 'needs-review' | 'not-checked';
+  source: 'claude' | 'sample' | 'none';
+  requirementName?: string;
+  documentType?: string;
+  summary: string;
+  nextStep: string;
+  checkedAt: string;
+  checks: PhotoCheckItem[];
 }
 
 export interface AuditEvent {
